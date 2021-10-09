@@ -51,8 +51,6 @@ if (!dir.exists(output.dir)) {
 }
 ```
 
-
-
 ```{r}
 megenaGraph <- function(x, v, MEGENA.ouput, mark.module = F, vlabel = F) {
     # Plot network of modified MEGENA output
@@ -228,8 +226,6 @@ megenaGraphPipeline <- function(x, v, plotModule = F) {
         }
     }
 }
-
-
 ```
 
 ```{r}
@@ -278,7 +274,6 @@ ddcor_res = ddcorAll(inputMat = d20, design = s20,
                      )
 ddcor_res_padj <- ddcor_res[ddcor_res$pValDiff<0.05,]
 
-
 if (T) {
   x <- ddcor_res
   v <- v20
@@ -302,7 +297,6 @@ if (T) {
                                      max.size = 100, doPar = F, num.cores = 4, 
                                      n.perm = 100, save.output = F)  
 }
-
 
 output.dir.cp <- file.path(output.dir, paste0(contrast))
 if (!dir.exists(output.dir.cp)) {
