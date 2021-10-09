@@ -1,0 +1,3799 @@
+---
+title: "Untitled"
+author: "leump"
+date: "2021/2/24"
+output: html_document
+---
+
+```{r Environments}
+library(rlang)
+
+where <- function(name, env = caller_env(), result = NULL){
+  if (identical(env, empty_env())){
+    if (is.null(result)){
+      stop("Can't find", name, call. = F)
+    } else {
+      result
+    }
+  } else if (env_has(env, name)) {
+    # success
+    result <- c(result, env)
+    where(name, env_parent(env), result)
+  } else {
+    # recursive
+    where(name, env_parent(env), result)
+  }
+}
+
+
+
+fget <- function(name,env=caller_env(),inherits=TRUE){
+  if(env_has(env,name)){
+    x <- env_get(env,name)
+    if(is.function(x)){
+      x
+    }
+    else{
+      stop("Can't find `", name, "`.", call. = FALSE)
+    }
+  }
+ if(identical(env,empty_env())|inherits==FALSE){
+    stop("Can't find `", name, "`.", call. = FALSE)
+ }
+  fget(name,env_parent(env),inherits =TRUE)
+}
+
+
+
+
+
+
+
+
+
+
+
+y <- 1
+f <- function(x) x + y
+fn_env(f)
+
+environment(f)
+
+
+e <- env()
+e$g <- function() 1
+
+fn_env(e$g)
+
+
+
+y <- 1
+e <- env(y = 10, g = function() {1+y})
+e$g()
+
+fn_env(e$g) <- e
+
+fn_env(e$g) <- rlang::global_env()
+
+fn_env(e$g) <- global_env()
+
+
+
+
+
+
+
+
+
+g <- function(x) {
+  if (!env_has(current_env(), "a")) {
+    message("Defining a")
+    a <- 1
+  } else {
+    a <- a + 1
+  }
+  a
+}
+
+
+
+
+g(10)
+#> Defining a
+#> [1] 1
+g(10)
+#> Defining a
+#> [1] 1
+
+
+
+
+h <- function(x) {
+  # 1.
+  a <- 2 # 2.
+  x + a
+}
+y <- h(1) # 3.
+
+
+
+
+h2 <- function(x) {
+  a <- x * 2
+  current_env()
+}
+
+e <- h2(x = 10)
+env_print(e)
+#> <environment: 0x7fe6c8502738>
+#> parent: <environment: global>
+#> bindings:
+#>  * a: <dbl>
+#>  * x: <dbl>
+fn_env(h2)
+#> <environment: R_GlobalEnv>
+
+plus <- function(x) {
+  function(y) x + y
+}
+
+plus_one <- plus(1)
+plus_one
+#> function(y) x + y
+#> <environment: 0x7fe6c6cd3ad8>
+
+
+
+plus_one(2)
+#> [1] 3
+
+
+
+
+f1 <- function(x1) {
+  f2 <- function(x2) {
+    f3 <- function(x3) {
+      x1 + x2 + x3
+    }
+    f3(3)
+  }
+  f2(2)
+}
+f1(1)
+
+
+
+
+g02 <- function() {
+  x <- 1
+  y <- 2
+  c(x, y)
+  env_print()
+  env_parents()
+}
+g02()
+
+env_parents(g02, last = empty_env())
+
+
+
+
+
+
+
+
+
+
+library(rlang)
+
+x <- 10
+y <- 20
+z <- 30
+g02 <- function() {
+    x <- 1
+    y <- 2
+    c(x, y, z)
+    print('# current')
+    env_print(current_env())
+    print(current_env()$x)
+    print(current_env()$y)
+    print(current_env()$z)
+
+    print('# search env')
+    print(search_envs())
+
+    print('# parent = global')
+    env_print(env_parent(current_env()))
+    print(env_parent(current_env())$x)
+    print(env_parent(current_env())$y)
+}
+g02()
+
+library(rlang)
+
+x <- 10
+y <- 20
+z <- 30
+g02 <- function() {
+    x <- 1
+    # y <- 2
+    
+    if (!exists("y")) {
+      y <- 1
+    } else {
+      y <- y + 1
+    }
+    y
+
+    print('# current')
+    env_print(current_env())
+    print(current_env()$x)
+    print(current_env()$y)
+
+    print('# search env')
+    print(search_envs())
+
+    print('# parent = global')
+    env_print(env_parent(current_env()))
+    print(env_parent(current_env())$x)
+    print(env_parent(current_env())$y)
+
+    c(x, y, z)
+}
+g02()
+
+
+
+z <- 30
+g02()
+
+z <- 40
+g02()
+
+
+
+
+plus <- function(x) {
+  function(y) x + y
+  print('# current')
+  env_print(current_env())
+  print(current_env()$x)
+  print(current_env()$y)
+
+  print('# search env')
+  print(search_envs())
+
+  print('# parent = global')
+  env_print(env_parent(current_env()))
+  print(env_parent(current_env())$x)
+  print(env_parent(current_env())$y)
+}
+
+
+plus(1)
+
+plus <- function(x) {
+    # in plus
+    print('# in plus')
+    env_print(current_env())
+    print(current_env()$x)
+    print(current_env()$y)
+
+    print('# search env')
+    print(search_envs())
+
+    print('# parent = global')
+    env_print(env_parent(current_env()))
+    print(env_parent(current_env())$x)
+    print(env_parent(current_env())$y)
+
+    function(y) {
+        print('# in plus child')
+        print('# current')
+        env_print(current_env())
+        print(current_env()$x)
+        print(current_env()$y)
+
+        print('# search env')
+        print(search_envs())
+
+        print('# parent = global')
+        env_print(env_parent(current_env()))
+        print(env_parent(current_env())$x)
+        print(env_parent(current_env())$y)
+
+        x + y
+    }
+}
+plus_one <- plus(1)
+
+plus_one(0)
+
+
+
+library(rlang)
+
+
+a <- function(x) b(x)
+b <- function(x) c(x)
+c <- function(x) x
+
+f <- function(x) {
+    g(x = 2)
+}
+g <- function(x) {
+    h(x = 3)
+}
+h <- function(x) {
+    lobstr::cst()
+}
+
+a(f())
+
+> a(f())
+    x
+ 1. +-global::a(f())
+ 2. | \-global::b(x)
+ 3. |   \-global::c(x)
+ 4. \-global::f()
+ 5.   \-global::g(x = 2)
+ 6.     \-global::h(x = 3)
+ 7.       \-lobstr::cst()
+
+
+
+
+
+a <- function(x) b(x)
+b <- function(x) c(x)
+c <- function(x) f()
+
+f <- function(x) {
+
+    g(x = 2)
+}
+g <- function(x) {
+    h(x = 3)
+}
+h <- function(x) {
+    lobstr::cst()
+}
+
+a()
+a()
+    x
+ 1. \-global::a()
+ 2.   \-global::b(x)
+ 3.     \-global::c(x)
+ 4.       \-global::f()
+ 5.         \-global::g(x = 2)
+ 6.           \-global::h(x = 3)
+ 7.             \-lobstr::cst()
+
+
+
+
+
+library(rlang)
+
+xx <- 10
+
+a <- function(x) {
+    xx <- 1
+    b(x)
+}
+b <- function(x) c(x)
+c <- function(x) x
+
+f <- function(x) {
+    cat('xx in f is ', xx)
+    print('# current')
+    env_print(current_env())
+    print(current_env()$x)
+    print(current_env()$y)
+
+    print('# search env')
+    print(search_envs())
+
+    print('# parent = global')
+    env_print(env_parent(current_env()))
+    g(x = 2)
+}
+
+g <- function(x) {
+    h(x = 3)
+}
+h <- function(x) {
+    lobstr::cst()
+}
+
+## f() is lazily evaluated
+a(f())
+
+
+
+c <- function(x) f()
+
+a()
+
+
+
+
+c <- function(x) {
+    xx <- 100
+    f <- function(x) {
+        cat('xx in f is ', xx)
+        print('# current')
+        env_print(current_env())
+        print(current_env()$x)
+        print(current_env()$y)
+
+        print('# search env')
+        print(search_envs())
+
+        print('# parent = global')
+        env_print(env_parent(current_env()))
+        g(x = 2)
+    }
+    f()
+}
+
+a()
+
+
+
+a <- function(x) {
+    xx <- 1
+    aa <- function(x) {
+        1
+    }
+    list(aa, current_env())
+}
+
+aa <- a()
+
+fn_env(f) <- aa[[2]]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+library(rWikiPathways)
+
+
+downloadPathwayArchive(organism='Arabidopsis thaliana', format='gpml')
+
+
+
+
+
+
+
+
+
+
+
+
+```
+
+```{r ROC}
+library(pROC)
+output_dir <- '/Users/leump/Desktop/output'
+file.xlsx <- '/Users/leump/Desktop/1.xlsx'
+d0 <- XLConnect::readWorksheetFromFile(
+  file.xlsx,
+  sheet = '1',
+  check.names = F,
+  rownames = 1
+)
+d10 <- d0
+
+d.sample <- read.csv('/Users/leump/Desktop/sample.csv', check.names = F)
+
+s0 <- factor(d.sample$锘縂roup[1:105],
+              levels =c("1",
+                        "2", 
+                        "3"
+                        ))
+
+
+## 1 年龄 性别 BMI
+df10 <- cbind(s0, d10)
+
+df11 <- scale(df10[, c(3: 4)]) %>% as.data.frame
+df12 <- cbind(d10$var, df11)
+
+
+df13 <- cbind(s0, d10)
+
+
+roc1 <- roc(df13$s0, df13$`IGF-1`, direction = '<')
+roc2 <- roc(df13$s0, df13$`IGFBP-3`, direction = '<')
+
+
+cairo_pdf(file = '/Users/leump/Desktop/ROC.pdf', width = 7, height = 7, onefile = T)
+plot.roc(roc1, 
+     print.auc = F, 
+     print.auc.cex = 1,
+     main = 'ROC',
+     legacy.axes = TRUE,
+     thresholds="best", # 基于youden指数选择roc曲线最佳阈值点
+     print.thres="best" # 在roc曲线上显示最佳阈值点
+     )
+plot.roc(roc2, 
+     add = T,
+     print.auc = F, 
+     print.auc.cex = 1,
+     main = 'ROC',
+     col='red',
+     legacy.axes = TRUE,
+     thresholds="best", # 基于youden指数选择roc曲线最佳阈值点
+     print.thres="best" # 在roc曲线上显示最佳阈值点
+     )
+legend('bottomright', legend = c(
+    paste('IGF-1', 'AUC=', round(roc1$auc[[1]], 3)),
+    paste('IGFBP-3', 'AUC=', round(roc2$auc[[1]], 3))),
+       lwd = 2, col = c('black', 'red'))
+dev.off()
+
+
+
+tiff(file = '/Users/leump/Desktop/ROC.tiff', width = 7, height = 7,
+     units = 'in', res = 300, compression = 'lzw+p')
+plot.roc(roc1, 
+     print.auc = F, 
+     print.auc.cex = 1,
+     main = 'ROC',
+     legacy.axes = T,
+     thresholds="best", # 基于youden指数选择roc曲线最佳阈值点
+     print.thres="best", # 在roc曲线上显示最佳阈值点
+     xlab = '1 - Specificity'
+     )
+plot.roc(roc2, 
+     add = T,
+     print.auc = F, 
+     print.auc.cex = 1,
+     main = 'ROC',
+     col='red',
+     legacy.axes = T,
+     thresholds="best", # 基于youden指数选择roc曲线最佳阈值点
+     print.thres="best", # 在roc曲线上显示最佳阈值点
+     xlab = '1 - Specificity'
+     )
+legend('bottomright', legend = c(
+    paste('IGF-1', 'AUC=', round(roc1$auc[[1]], 3)),
+    paste('IGFBP-3', 'AUC=', round(roc2$auc[[1]], 3))),
+       lwd = 2, col = c('black', 'red'))
+dev.off()
+```
+
+```{r Conditions}
+library(rlang)
+
+stop("This is what an error looks like")
+#> Error in eval(expr, envir, enclos): This is what an error looks like
+
+warning("This is what a warning looks like")
+#> Warning: This is what a warning looks like
+
+message("This is what a message looks like")
+#> This is what a message looks like
+
+f <- function() g()
+g <- function() h()
+h <- function() stop("This is an error!")
+
+f()
+#> Error in h(): This is an error!
+
+h <- function() stop("This is an error!", call. = FALSE)
+f()
+#> Error: This is an error!
+
+
+
+cat("file A\n", file = "A")
+cat("file B\n", file = "B")
+file.copy("A", "C")
+
+file.remove("D")
+
+file.create('a.txt', 'b.txt', 'c.txt', 'd.txt', 'e.txt')
+file.remove1('a.txt', 'b.txt', 'c.txt', 'd.txt', 'e.txt')
+
+file.remove1 <- function(...) {
+  
+  # if (file.exists(file)) {
+  #   
+  #   file.remove(file)
+  # }
+  if (!all(file.exists(...))){
+       stop('1234')  
+    
+  }
+
+  
+  file.remove(...)
+
+}
+
+library(rlang)
+
+
+tryCatch(
+  error = function(cnd) {
+    # code to run when error is thrown
+  },
+  code_to_run_while_handlers_are_active
+)
+
+withCallingHandlers(
+  warning = function(cnd) {
+    # code to run when warning is signalled
+  },
+  message = function(cnd) {
+    # code to run when message is signalled
+  },
+  code_to_run_while_handlers_are_active
+)
+
+
+cnd <- catch_cnd(stop("An error"))
+str(cnd)
+#> List of 2
+#>  $ message: chr "An error"
+#>  $ call   : language force(expr)
+#>  - attr(*, "class")= chr [1:3] "simpleError" "error" "condition"
+
+conditionMessage(cnd)
+conditionCall(cnd)
+
+
+
+
+f3 <- function(x) {
+  tryCatch(
+    error = function(cnd) NA,
+    log(x)
+  )
+}
+
+f3("x")
+#> [1] NA
+
+tryCatch(
+  error = function(cnd) 10,
+  1 + 1
+)
+#> [1] 2
+
+tryCatch(
+  error = function(cnd) 10,
+  {
+    message("Hi!")
+    1 + 1
+  }
+)
+#> Hi!
+#> [1] 2
+
+tryCatch(
+  message = function(cnd) "There",
+  {essage("Here")
+    m
+    stop("This code is never run!")
+  }
+)
+#> [1] "There"
+
+
+tryCatch(
+  error = function(cnd) {
+    paste0("--", conditionMessage(cnd), "--")
+  },
+  stop("This is an error")
+)
+#> [1] "--This is an error--"
+
+
+path <- tempfile()
+tryCatch(
+  {
+    writeLines("Hi!", path)
+    # ...
+  },
+  finally = {
+    # always run
+    unlink(path)
+  }
+)
+
+
+
+
+tryCatch(
+  message = function(cnd) cat("Caught a message!\n"), 
+  {
+    message("Someone there?")
+    message("Why, yes!")
+  }
+)
+#> Caught a message!
+
+withCallingHandlers(
+  message = function(cnd) cat("Caught a message!\n"), 
+  {
+    message("Someone there?")
+    message("Why, yes!")
+  }
+)
+#> Caught a message!
+#> Someone there?
+#> Caught a message!
+#> Why, yes!
+
+withCallingHandlers(
+  message = function(cnd) message("Second message"),
+  message("First message")
+)
+#> Second message
+#> First message
+
+
+
+
+show_condition <- function(code) {
+  tryCatch(
+    error = function(cnd) "error",
+    warning = function(cnd) "warning",
+    message = function(cnd) "message",
+    {
+      code
+      NULL
+    }
+  )
+}
+
+show_condition(stop("!"))
+show_condition(10)
+show_condition(warning("?!"))
+show_condition({
+  10
+  message("?")
+  warning("?!")
+})
+
+
+
+f3 <- function(x) {
+  tryCatch(
+    warning = function(cnd) "warning",
+    log(x)
+  )
+}
+
+f3("x")
+
+
+
+tryCatch(
+  error = function(cnd) 10,
+  1 + 1
+)
+#> [1] 2
+
+tryCatch(
+  error = function(cnd) 10,
+  {
+    message("Hi!")
+    1 + 1
+  }
+)
+#> Hi!
+#> [1] 2
+
+
+
+tryCatch(
+  message = function(cnd) "There",
+  {
+    message("Here")
+    stop("This code is never run!")
+  }
+)
+#> [1] "There"
+
+
+
+show_condition <- function(code) {
+  withCallingHandlers(
+    error = function(cnd) "error",
+    warning = function(cnd) "warning",
+    message = function(cnd) "message",
+    {
+      code
+      NULL
+    }
+  )
+}
+
+
+show_condition(stop("!"))
+show_condition(10)
+show_condition(warning("?!"))
+show_condition({
+  10
+  message("?")
+  warning("?!")
+})
+
+
+tryCatch(
+  message = function(cnd) cat("Caught a message!\n"), 
+  {
+    message("Someone there?")
+    message("Why, yes!")
+  }
+)
+#> Caught a message!
+
+withCallingHandlers(
+  message = function(cnd) cat("Caught a message!\n"), 
+  {
+    message("Someone there?")
+    message("Why, yes!")
+  }
+)
+#> Caught a message!
+#> Someone there?
+#> Caught a message!
+#> Why, yes!
+
+withCallingHandlers(
+  message = function(cnd) message("Second message"),
+  message("First message")
+)
+#> Second message
+#> First message
+
+
+
+
+
+
+
+
+show_condition1 <- function(code) {
+  tryCatch(
+    error = function(cnd) "error",
+    warning = function(cnd) "warning",
+    message = function(cnd) "message",
+    {
+      lobstr::cst()
+      code
+      NULL
+    }
+  )
+}
+
+show_condition1(stop("!"))
+show_condition1(10)
+show_condition1(warning("?!"))
+show_condition1({
+  10
+  message("?")
+  warning("?!")
+})
+
+
+show_condition2 <- function(code) {
+  withCallingHandlers(
+    error = function(cnd) "error",
+    warning = function(cnd) "warning",
+    message = function(cnd) "message",
+    {
+      lobstr::cst()
+      code
+      NULL
+    }
+  )
+}
+
+show_condition2(stop("!"))
+show_condition2(10)
+show_condition2(warning("?!"))
+show_condition2({
+  10
+  message("?")
+  warning("?!")
+})
+
+
+
+f <- function() g()
+g <- function() h()
+h <- function() stop("!")
+h <- function() message("!")
+
+withCallingHandlers(f(), message = function(cnd) {
+  lobstr::cst()
+  cnd_muffle(cnd)
+  })
+
+
+tryCatch(f(), message = function(cnd) lobstr::cst())
+
+
+
+withCallingHandlers(
+  message = function(cnd) message("b"),
+  withCallingHandlers(
+    message = function(cnd) message("a"),
+    message("c")
+  )
+)
+
+
+
+
+
+
+
+
+
+library(rlang)
+
+condition <- function(subclass, message, call = sys.call(-1), ...) {
+    structure(
+        class = c(subclass, "condition"),
+        list(message = message, call = call, ...)
+    )
+}
+
+my_note_error <- function(text) {
+    msg <- paste0("My note: ", text)
+    condition(c("my_note", "note"),
+              message = msg, 
+              text = text
+    )
+}
+
+f <- function() g()
+g <- function() h()
+
+h <- function() {
+    tryCatch(
+        error = function(cnd) {
+            cat("Caught an error!\n")
+            lobstr::cst()
+        },
+        warning = function(cnd) {
+            cat("Caught a warning!\n")
+            lobstr::cst()
+        },
+        message = function(cnd) {
+            cat("Caught a message!\n")
+            lobstr::cst()
+        },
+        {
+            stop("error: Someone there?")
+            stop("error: Why, yes!")
+            warning("warning: Someone there?")
+            warning("warning: Why, yes!")
+            message("message: Someone there?")
+            message("message: Why, yes!")
+        }
+    )
+
+}
+
+f()
+
+h <- function() {
+    withCallingHandlers(
+        error = function(cnd) {
+            cat("Caught an error!\n")
+            lobstr::cst()
+            cnd_muffle(cnd)
+        },
+        warning = function(cnd) {
+            cat("Caught a warning!\n")
+            lobstr::cst()
+        },
+        message = function(cnd) {
+            cat("Caught a message!\n")
+            lobstr::cst()
+        },
+        {
+            stop("error: Someone there?")
+            # stop("error: Why, yes!")
+            warning("warning: Someone there?\n")
+            warning("warning: Why, yes!\n")
+            message("message: Someone there?\n")
+            message("message: Why, yes!\n")
+        }
+    )
+}
+
+f()
+
+
+
+library(rlang)
+
+
+
+
+abort(
+  "error_not_found",
+  message = "Path `blah.csv` not found", 
+  path = "blah.csv"
+)
+#> Error: Path `blah.csv` not found
+
+log(letters)
+#> Error in log(letters): non-numeric argument to mathematical function
+log(1:10, base = letters)
+#> Error in log(1:10, base = letters): non-numeric argument to mathematical
+#> function
+
+my_log <- function(x, base = exp(1)) {
+  if (!is.numeric(x)) {
+    abort(paste0(
+      "`x` must be a numeric vector; not ", typeof(x), "."
+    ))
+  }
+  if (!is.numeric(base)) {
+    abort(paste0(
+      "`base` must be a numeric vector; not ", typeof(base), "."
+    ))
+  }
+
+  base::log(x, base = base)
+}
+
+my_log(letters)
+
+my_log(1:10, base = letters)
+
+
+abort_bad_argument <- function(arg, must, not = NULL) {
+  msg <- glue::glue("`{arg}` must {must}")
+  if (!is.null(not)) {
+    not <- typeof(not)
+    msg <- glue::glue("{msg}; not {not}.")
+  }
+  
+  abort("error_bad_argument", 
+    message = msg, 
+    arg = arg, 
+    must = must, 
+    not = not
+  )
+}
+
+abort_bad_argument()
+
+stop_custom <- function(.subclass, message, call = NULL, ...) {
+  err <- structure(
+    list(
+      message = message,
+      call = call,
+      ...
+    ),
+    class = c(.subclass, "error", "condition")
+  )
+  stop(err)
+}
+
+err <- catch_cnd(
+  stop_custom("error_new", "This is a custom error", x = 10)
+)
+class(err)
+err$x
+
+
+
+
+my_log <- function(x, base = exp(1)) {
+  if (!is.numeric(x)) {
+    abort_bad_argument("x", must = "be numeric", not = x)
+  }
+  if (!is.numeric(base)) {
+    abort_bad_argument("base", must = "be numeric", not = base)
+  }
+
+  base::log(x, base = base)
+}
+
+
+
+
+# Inside a package, it’s occasionally useful to check that a package is installed before using it. 
+# Write a function that checks if a package is installed (with requireNamespace("pkg", quietly = FALSE)) and if not, throws a custom condition that includes the package name in the metadata.
+
+
+
+f1 <- function(x) {
+  if(!requireNamespace(x, quietly = F)) {
+      abort(
+        paste0(x, ' not_installed')
+      )
+  }
+  paste0(x, ' installed')
+}
+
+f1('rlang')
+f1('rlang1')
+
+
+
+fail_with <- function(expr, value = NULL) {
+  tryCatch(
+    error = function(cnd) value,
+    expr
+  )
+}
+
+fail_with(log(10), NA_real_)
+#> [1] 2.3
+fail_with(log("x"), NA_real_)
+#> [1] NA
+
+
+
+try2 <- function(expr, silent = FALSE) {
+  tryCatch(
+    error = function(cnd) {
+      msg <- conditionMessage(cnd)
+      if (!silent) {
+        message("Error: ", msg)
+      }
+      structure(msg, class = "try-error")
+    },
+    expr
+  )
+}
+
+try2(1)
+
+try2(stop("Hi"))
+
+try2(stop("Hi"), silent = TRUE)
+
+
+
+foo <- function(expr) {
+  tryCatch(
+    error = function(cnd) error_val,
+    {
+      expr
+      success_val
+    }
+  )
+}
+
+
+
+does_error <- function(expr) {
+  tryCatch(
+    error = function(cnd) TRUE,
+    {
+      expr
+      FALSE
+    }
+  )
+}
+
+
+
+catch_cnd <- function(expr) {
+  tryCatch(
+    condition = function(cnd) cnd, 
+    {
+      expr
+      NULL
+    }
+  )
+}
+
+
+
+safety <- function(expr) {
+  tryCatch(
+    error = function(cnd) {
+      list(result = NULL, error = cnd)
+    },
+    list(result = expr, error = NULL)
+  )
+}
+
+str(safety(1 + 10))
+#> List of 2
+#>  $ result: num 11
+#>  $ error : NULL
+str(safety(stop("Error!")))
+#> List of 2
+#>  $ result: NULL
+#>  $ error :List of 2
+#>   ..$ message: chr "Error!"
+#>   ..$ call   : language doTryCatch(return(expr), name, parentenv, handler)
+#>   ..- attr(*, "class")= chr [1:3] "simpleError" "error" "condition"
+
+library(rlang)
+warning2error <- function(expr) {
+  withCallingHandlers(
+    warning = function(cnd) abort(conditionMessage(cnd)),
+    expr
+  )
+}
+
+warning2error({
+  x <- 2 ^ 4
+  warn("Hello")
+})
+#> Error: Hello
+
+
+
+
+
+catch_cnds <- function(expr) {
+  conds <- list()
+  add_cond <- function(cnd) {
+    conds <<- append(conds, list(cnd))
+    cnd_muffle(cnd)
+  }
+  
+  tryCatch(
+    error = function(cnd) {
+      conds <<- append(conds, list(cnd))
+    },
+    withCallingHandlers(
+      message = add_cond,
+      warning = add_cond,
+      expr
+    )
+  )
+  
+  conds
+}
+
+catch_cnds({
+  inform("a")
+  warn("b")
+  abort("C")
+})
+#> [[1]]
+#> <message: a
+#> >
+#> 
+#> [[2]]
+#> <warning: b>
+#> 
+#> [[3]]
+#> <error/rlang_error>
+#> C
+#> Backtrace:
+#>  1. global::catch_cnds(...)
+#>  6. base::withCallingHandlers(...)
+
+
+
+
+
+log <- function(message, level = c("info", "error", "fatal")) {
+  level <- match.arg(level)
+  signal(message, "log", level = level)
+}
+
+
+log("This code was run")
+
+
+record_log <- function(expr, path = stdout()) {
+  withCallingHandlers(
+    log = function(cnd) {
+      cat(
+        "[", cnd$level, "] ", cnd$message, "\n", sep = "",
+        file = path, append = TRUE
+      )
+    },
+    expr
+  )
+}
+
+record_log(log("Hello"))
+#> [info] Hello
+
+
+ignore_log_levels <- function(expr, levels) {
+  withCallingHandlers(
+    log = function(cnd) {
+      if (cnd$level %in% levels) {
+        cnd_muffle(cnd)
+      }
+    },
+    expr
+  )
+}
+
+record_log(ignore_log_levels(log("Hello"), "info"))
+
+withRestarts(signalCondition(cond), muffle = function() NULL)
+
+withCallingHandlers(
+error = function(e) {print(e)},
+{
+stop('a error')
+print('hi')
+}
+);print('hi2')
+tryCatch(
+error = function(e) {print(e)},
+{
+stop('a error')
+print('hi')
+}
+);print('hi2')
+
+```
+
+```{r Lipidname}
+d10 <- read.csv('/Users/leump/Desktop/20210226/mapping(1).csv', 
+                row.names = 1, check.names = F)
+
+d.ht <- read.csv('/Users/leump/Desktop/20210226/05_Hypothesis_test/hypothesis_test.csv', 
+                 row.names = 1, check.names = F)
+
+d.var <- read.csv('/Users/leump/Desktop/20210226/00_data/var.csv', 
+                 row.names = 1, check.names = F)
+
+ht <- subset(d.ht, d.ht$`non-parametric pvalue` < 0.05)
+
+selected <- rownames(ht)
+
+d.data.ht <- d10[selected, ]
+
+d.var.ht <- d.var[selected, ]
+
+write.csv(d.data.ht, '/Users/leump/Desktop/d.csv')
+```
+
+```{r RDA}
+library(vegan)
+ 
+##读取数据
+#读入物种数据，细菌门水平丰度表（OTU 水平数据量太大，后续的置换检验和变量选择过程很费时间，不方便做示例演示）
+phylum <- read.delim('/Users/leump/Desktop/RDA/phylum_table.txt', row.names = 1, sep = '\t', stringsAsFactors = FALSE, check.names = FALSE)
+ 
+#读取环境数据
+env <- read.delim('/Users/leump/Desktop/RDA/env_table.txt', row.names = 1, sep = '\t', stringsAsFactors = FALSE, check.names = FALSE)
+ 
+##RDA
+#调用格式 1
+#rda(Y, X, W)
+#或者 2
+#rda(Y~var1+var2+var3+factorA+var2*var3+Condition(var4))
+ 
+#直接使用原始数据，不做转化。对于群落物种组成数据来讲（因为通常包含很多 0 值），不是很推荐
+rda_result <- rda(phylum~., env, scale = FALSE)
+ 
+##tb-RDA
+#物种数据 Hellinger 预转化（处理包含很多 0 值的群落物种数据时，推荐使用）
+phylum_hel <- decostand(phylum, method = 'hellinger')
+ 
+#使用全部的环境数据
+rda_tb <- rda(phylum_hel~., env, scale = FALSE)
+ 
+#若只关注局部环境数据，除了在原始表格中修改变量个数外，还可直接在 rda() 中指定
+#例如只考虑 pH、TC、TN、AP、AK 这 5 种环境变量
+#rda_tb <- rda(phylum_hel~pH+TC+TN+AP+AK, env, scale = FALSE)
+ 
+#默认情况下，rda(phylum_hel~., env)，不包含环境变量间的交互作用
+#若想关注某两个环境变量间的交互作用，例如添加 TC 和 TN 的交互作用项
+#rda_tb <- rda(phylum_hel~pH+TC+DOC+SOM+TN+NO3+NH4+AP+AK+TC*TN, env, scale = FALSE)
+ 
+##偏 RDA
+#例如控制土壤 pH 影响后（pH 作为协变量），观测其它环境因素的影响；物种数据 Hellinger 预转化
+rda_part <- rda(phylum_hel~TC+DOC+SOM+TN+NO3+NH4+AP+AK+Condition(pH), data = env, scale = FALSE)
+ 
+##db-RDA（以 Bray-curtis 距离为例，注意这里直接使用了原始的物种丰度矩阵）
+#计算距离
+dis_bray <- vegdist(phylum, method = 'bray')
+ 
+#PCoA 排序
+pcoa <- cmdscale(dis_bray, k = nrow(phylum) - 1, eig = TRUE, add = TRUE)
+ 
+#提取 PCoA 样方得分（坐标）
+pcoa_site <- pcoa$point
+ 
+#db-RDA，使用全部的环境数据
+rda_db <- rda(pcoa_site, env, scale = FALSE)
+ 
+#或者，capscale() 提供了直接运行的方法
+rda_db <- capscale(phylum~., env, distance = 'bray', add = TRUE)
+ 
+#若基于欧氏距离，则和常规 RDA 的结果一致
+#物种数据 Hellinger 转化后，分别执行 tb-RDA 与使用欧氏距离的 db-RDA
+rda_tb_test <- rda(phylum_hel~., env)
+rda_db_test <- capscale(phylum_hel~., env, distance = 'euclidean')
+ 
+par(mfrow = c(1, 2))
+plot(rda_tb_test, scaling = 1)
+plot(rda_db_test, scaling = 1)
+ 
+##非线性 RDA *
+#本文不做介绍
+#可参见 “DanielBorcard, FranoisGillet, PierreLegendre, et al. 数量生态学:R语言的应用（赖江山 译）. 高等教育出版社, 2014.” 170-174 页内容
+ 
+##RDA 结果解读，以下以 tb-RDA 结果为例
+#查看统计结果信息，以 I 型标尺为例
+rda_tb.scaling1 <- summary(rda_tb, scaling = 1)
+rda_tb.scaling1
+ 
+#作图查看排序结果，三序图，包含 I 型标尺和 II 型标尺
+par(mfrow = c(1, 2))
+plot(rda_tb, scaling = 1, main = 'I 型标尺', display = c('wa', 'sp', 'cn'))
+rda_sp.scaling1 <- scores(rda_tb, choices = 1:2, scaling = 1, display = 'sp')
+arrows(0, 0, rda_sp.scaling1[ ,1], rda_sp.scaling1[ ,2], length =  0, lty = 1, col = 'red')
+plot(rda_tb, scaling = 2, main = 'II 型标尺', display = c('wa', 'sp', 'cn'))
+rda_sp.scaling2 <- scores(rda_tb, choices = 1:2, scaling = 2, display = 'sp')
+arrows(0, 0, rda_sp.scaling2[ ,1], rda_sp.scaling2[ ,2], length =  0, lty = 1, col = 'red')
+ 
+#隐藏物种信息，以 I 型标尺为例展示双序图，并查看分别使用物种加权计算的样方坐标以及拟合的样方坐标的差异
+par(mfrow = c(1, 2))
+plot(rda_tb, scaling = 1, main = 'I 型标尺，加权', display = c('wa', 'cn'))
+plot(rda_tb, scaling = 1, main = 'I 型标尺，拟合', display = c('lc', 'cn'))
+ 
+##RDA 结果提取
+#scores() 提取排序得分（坐标），以 I 型标尺为例，分别提取前两个约束轴中的样方（排序对象）、物种（响应变量）、环境因子（解释变量）的排序坐标
+rda_site.scaling1 <- scores(rda_tb, choices = 1:2, scaling = 1, display = 'wa')	#使用物种加权和计算的样方坐标
+rda_sp.scaling1 <- scores(rda_tb, choices = 1:2, scaling = 1, display = 'sp')
+rda_env.scaling1 <- scores(rda_tb, choices = 1:2, scaling = 1, display = 'cn')
+#若需要输出在本地，以样方坐标为例，以 csv 格式为例
+write.csv(data.frame(rda_site.scaling1), 'rda_site.scaling1.csv')
+ 
+#coef() 提取典范系数
+rda_coef <- coef(rda_tb)
+ 
+#其它提取方式，首先查看结果包含的所有信息
+names(rda_tb.scaling1)
+#然后提取相关内容，例如我们想提取前两轴的“样方得分”，可如此做
+rda_site.scaling1 <- rda_tb.scaling1$sites[ ,1:2]
+#该结果和上述“scores(rda_tb, choices = 1:2, scaling = 1, display = 'wa')”的结果是一致的
+#同理，可如此输出在本地
+write.csv(data.frame(rda_site.scaling1), 'rda_site.scaling1.csv')
+ 
+##R2 校正
+#RsquareAdj() 提取 R2
+r2 <- RsquareAdj(rda_tb)
+rda_noadj <- r2$r.squared	#原始 R2
+rda_adj <- r2$adj.r.squared	#校正后的 R2
+ 
+#关于约束轴的解释量，应当在 R2 校正后手动计算
+ 
+##置换检验
+#所有约束轴的置换检验，以 999 次为例
+rda_tb_test <- anova(rda_tb, permutations = 999)
+#或者使用
+rda_tb_test <- anova.cca(rda_tb, step = 1000)
+ 
+#各约束轴逐一检验，以 999 次为例
+rda_tb_test_axis <- anova(rda_tb, by = 'axis', permutations = 999)
+#或者使用
+rda_tb_test_axis <- anova.cca(rda_tb, by = 'axis', step = 1000)
+ 
+#p 值校正（Bonferroni 为例）
+rda_tb_test_axis$`Pr(>F)` <- p.adjust(rda_tb_test_axis$`Pr(>F)`, method = 'bonferroni')
+ 
+##断棍模型和 Kaiser-Guttman 准则确定残差轴
+#提取残差特征值
+pca_eig <- rda_tb$CA$eig
+ 
+#Kaiser-Guttman 准则
+pca_eig[pca_eig > mean(pca_eig)]
+ 
+#断棍模型
+n <- length(pca_eig)
+bsm <- data.frame(j=seq(1:n), p = 0)
+bsm$p[1] <- 1/n
+for (i in 2:n) bsm$p[i] <- bsm$p[i-1] + (1/(n + 1 - i))
+bsm$p <- 100*bsm$p/n
+bsm
+ 
+# 绘制每轴的特征根和方差百分比 
+par(mfrow = c(2, 1))
+barplot(pca_eig, main = '特征根', col = 'bisque', las = 2)
+abline(h = mean(pca_eig), col = 'red')
+legend('topright', '平均特征根', lwd = 1, col = 2, bty = 'n')
+barplot(t(cbind(100 * pca_eig/sum(pca_eig), bsm$p[n:1])), beside = TRUE, main = '% 变差', col = c('bisque', 2), las = 2)
+legend('topright', c('% 特征根', '断棍模型'), pch = 15, col = c('bisque', 2), bty = 'n')
+ 
+##变量选择
+#计算方差膨胀因子
+vif.cca(rda_tb)
+ 
+#vegan 包 ordistep() 前向选择，基于 999 次置换检验
+rda_tb_forward_p <- ordistep(rda(phylum_hel~1, env, scale = FALSE), scope = formula(rda_tb), direction = 'forward', permutations = 999)
+ 
+#vegan 包 ordiR2step() 前向选择，基于 999 次置换检验
+rda_tb_forward_r <- ordiR2step(rda(phylum_hel~1, env, scale = FALSE), scope = formula(rda_tb), R2scope = rda_adj, direction = 'forward', permutations = 999)
+ 
+#以 rda_tb 和 rda_tb_forward_r 为例，简要绘制双序图比较变量选择前后结果
+par(mfrow = c(1, 2))
+plot(rda_tb, scaling = 1, main = '原始模型，I 型标尺', display = c('wa', 'cn'))
+plot(rda_tb_forward_r, scaling = 1, main = '前向选择后，I 型标尺', display = c('wa', 'cn'))
+ 
+#细节部分查看
+summary(rda_tb_forward_r, scaling = 1)
+ 
+#比较选择前后校正后 R2 的差异
+RsquareAdj(rda_tb)$adj.r.squared
+RsquareAdj(rda_tb_forward_r)$adj.r.squared
+ 
+#packfor 包 forward.sel() 前向选择
+library(packfor)
+forward.sel(phylum_hel, env, adjR2thresh = rda_adj)
+ 
+##变差分解 varpart()，以前向选择后的简约模型 rda_tb_forward_r 为例（包含 6 个环境解释变量）
+#以两组环境变量为例，运行变差分解
+rda_tb_forward_vp <- varpart(phylum_hel, env['pH'], env[c('DOC', 'SOM', 'AP', 'AK', 'NH4')])
+rda_tb_forward_vp
+ 
+plot(rda_tb_forward_vp, digits = 2, Xnames = c('pH', 'CNPK'), bg = c('blue', 'red'))
+ 
+#查看前向选择中被剔除的环境变量“TC”，与这 6 个被保留的环境变量之间解释变差的“共享程度”
+rda_tb_forward_vp <- varpart(phylum_hel, env['TC'], env[c('pH', 'DOC', 'SOM', 'AP', 'AK', 'NH4')])
+plot(rda_tb_forward_vp, digits = 2, Xnames = c('TC', 'forward_env'), bg = c('blue', 'red'))
+ 
+#解释变差的置换检验，以 pH 所能解释的全部变差为例；999 次置换
+anova(rda(phylum_hel, env['pH']), permutations = 999)
+#若考虑 pH 单独解释的变差部分，需将其它变量作为协变量；999 次置换
+anova(rda(phylum_hel, env['pH'], env[c('DOC', 'SOM', 'AP', 'AK', 'NH4')]), permutations = 999)
+ 
+##plot() 作图示例，以前向选择后的简约模型 rda_tb_forward_r 为例，展示前两轴，II 型标尺，双序图，默认使用物种加权和计算的样方坐标
+pdf('rda_test1.pdf', width = 5, height = 5)
+plot(rda_tb_forward_r, choices = c(1, 2), scaling = 2, type = 'n')
+text(rda_tb_forward_r, choices = c(1, 2), scaling = 2, dis = 'cn', col = 'blue', cex = 0.8)
+points(rda_tb_forward_r, choices = c(1, 2), scaling = 2, pch = 21, bg = c(rep('red', 9), rep('orange', 9), rep('green3', 9)), col = NA, cex = 1.2)
+dev.off()
+ 
+##ggplot2 作图，以前向选择后的简约模型 rda_tb_forward_r 为例，展示前两轴，II 型标尺，双序图，默认使用物种加权和计算的样方坐标
+#提取样方和环境因子排序坐标，前两轴，II 型标尺
+rda_tb_forward_r.scaling2 <- summary(rda_tb_forward_r, scaling = 2)
+rda_tb_forward_r.site <- data.frame(rda_tb_forward_r.scaling2$sites)[1:2]
+rda_tb_forward_r.env <- data.frame(rda_tb_forward_r.scaling2$biplot)[1:2]
+ 
+#读取样本分组数据（附件“group.txt”）
+group <- read.delim('/Users/leump/Desktop/RDA/group.txt', sep = '\t', stringsAsFactors = FALSE, check.names = FALSE)
+ 
+#合并样本分组信息，构建 ggplot2 作图数据集
+rda_tb_forward_r.site$sample <- rownames(rda_tb_forward_r.site)
+rda_tb_forward_r.site <- merge(rda_tb_forward_r.site, group, by = 'sample')
+ 
+rda_tb_forward_r.env$sample <- NA
+rda_tb_forward_r.env$group <- rownames(rda_tb_forward_r.env)
+ 
+#ggplot2 作图
+library(ggplot2)
+ 
+p <- ggplot(rda_tb_forward_r.site, aes(RDA1, RDA2)) +
+geom_point(aes(color = group)) +
+scale_color_manual(values = c('red', 'orange', 'green3')) +
+theme(panel.grid = element_blank(), panel.background = element_rect(color = 'black', fill = 'transparent'), legend.title = element_blank(), legend.key = element_rect(fill = 'transparent')) + 
+labs(x = 'RDA1 (42.91%)', y = 'RDA2 (9.80%)') +
+geom_vline(xintercept = 0, color = 'gray', size = 0.5) + 
+geom_hline(yintercept = 0, color = 'gray', size = 0.5) +
+geom_segment(data = rda_tb_forward_r.env, aes(x = 0,y = 0, xend = RDA1,yend = RDA2), arrow = arrow(length = unit(0.1, 'cm')), size = 0.3, color = 'blue') +
+geom_text(data = rda_tb_forward_r.env, aes(RDA1 * 1.1, RDA2 * 1.1, label = group), color = 'blue', size = 3)
+p
+ggsave('rda_test2.pdf', p, width = 5, height = 4)
+ggsave('rda_test2.png', p, width = 5, height = 4)
+```
+
+```{r}
+d.sample <- read.csv('/Users/leump/Desktop/sample.csv', 
+                row.names = 1, check.names = F)
+
+d.data <- read.csv('/Users/leump/Desktop/2020-155-B-01/data.csv', 
+                row.names = 1, check.names = F)
+
+selected <- rownames(d.sample)
+
+d10 <- d.data[selected, ]
+
+write.csv(d10, '/Users/leump/Desktop/data.csv')
+
+
+
+```
+
+```{r CoV}
+d.qc <- read.csv('/Users/leump/Desktop/2020-107-B-01/data/qc.csv', 
+                row.names = 1, check.names = F)
+
+d10 <- d.qc[, stringr::str_detect(colnames(d.qc), 'CE')]
+
+c1 <- cov(x = d10, y = NULL, use = "everything", method = "pearson") %>% as.data.frame
+
+c1
+```
+
+```{r 2020-107-B-01}
+d.data <- read.csv('/Users/leump/Desktop/2020-107-B-01/data/data.csv', row.names = 1, check.names = F, encoding = 'UTF-8')
+
+d.var <- read.csv('/Users/leump/Desktop/2020-107-B-01/data/var.csv', row.names = 1, check.names = F, encoding = 'UTF-8')
+
+d.ht <- read.csv('/Users/leump/Desktop/2020-107-B-01/06_Hypothesis_test 假设检验的结果/hypothesis_test.csv', row.names = 1, check.names = F, encoding = 'UTF-8')
+
+selected <- subset(d.ht, d.ht$`non-parametric pvalue` < 0.05) %>% rownames()
+
+d.data.ht <- d.data[, selected]
+
+d.var.ht <- d.var[selected, ]
+
+write.csv(d.data.ht, '/Users/leump/Desktop/2020-107-B-01/data/data_ht.csv')
+
+write.csv(d.var.ht, '/Users/leump/Desktop/2020-107-B-01/data/var_ht.csv')
+
+
+
+file.xlsx <- '/Users/leump/Desktop/01_2020-107-B-01-① original data原始数据.xlsx'
+d.data <- XLConnect::readWorksheetFromFile(
+  file.xlsx,
+  sheet = 'data.csv',
+  check.names = F,
+  rownames = 1
+)
+d.sample <- XLConnect::readWorksheetFromFile(
+  file.xlsx,
+  sheet = 'sample.csv',
+  check.names = F,
+  rownames = 1
+)
+d.var <- XLConnect::readWorksheetFromFile(
+  file.xlsx,
+  sheet = 'var.csv',
+  check.names = F,
+  rownames = 1
+)
+
+
+
+
+d.CoV <- read.csv('/Users/leump/Desktop/QC_CoV.csv', row.names = 1, check.names = F)
+
+d10 <- d.CoV[51:554, ]
+
+selected <- rownames(d10)
+
+d.data.ht <- d.data[, selected]
+
+d.var.ht <- d.var[selected, ]
+
+write.csv(d.data.ht, '/Users/leump/Desktop/data_ht.csv')
+
+write.csv(d.var.ht, '/Users/leump/Desktop/var_ht.csv')
+
+```
+
+```{r 2020-066-B-05}
+output_dir <- 'output/'
+d <- read.csv('/Users/leump/Desktop/2020-066-B-05-富集分析/MetPA_40-60 day_3-30 day.csv')
+x <- d$Impact
+y <- d$Raw.p
+
+
+
+  y = -log10(y)
+  inx <- order(y, decreasing = T)
+  x <- x[inx]
+  y <- y[inx]
+  sqx <- sqrt(x)
+  min.x <- min(sqx)
+  max.x <- max(sqx)
+  maxR <- (max.x - min.x)/40
+  minR <- (max.x - min.x)/160
+  radi.vec <- minR + (maxR - minR) * (sqx - min.x)/(max.x - 
+                                                      min.x)
+  bg.vec <- heat.colors(length(y))
+
+
+
+d10 <- data.frame(
+  x = x,
+  y = y,
+  radi = radi.vec,
+  bg = bg.vec,
+  # id = names(x)
+  label = d$pathway
+)
+  
+
+d10[x <= 0.1, 'label'] <- ''
+# g <- ggplot(d10, aes(x = x, y = y, fill = I(bg), size = I(radi * 900))) +
+#   geom_point(shape=21) +
+#   ggrepel::geom_text_repel(aes(label = label), size = 3, color = 'black') +
+#   labs(x = 'Pathway Impact', y = '-log10(p)') +
+#   theme_bw()
+# g
+
+
+g <- ggplot(d10, aes(x = x, y = y)) +
+  geom_point(aes(size = x,color= -log10(x)), shape=19) + 
+  scale_color_gradient(low = "#FFFF80", high = "#FF0000") +
+  ggrepel::geom_text_repel(aes(label = label), size = 5, color = 'black') +
+  labs(x = 'Pathway Impact', y = '-log10(p)',
+       color = '-log10(p)', size = 'Pathway Impact') +
+  scale_size(range=c(1, 16)) +
+  theme_bw()
+g
+
+
+
+## scree plot
+ggsave('pathway_40-60 day_3-30 day.pdf', g, file.path(output_dir), device = cairo_pdf, 
+       w = 8, h = 6, units = 'in')
+ggsave('pathway_40-60 day_3-30 day.tiff', g, file.path(output_dir), device = 'tiff', 
+       w = 8, h = 6, units = 'in', compression = 'lzw+p', dpi = 300)
+```
+
+```{r 2020-074-C-03}
+# d.data_origin <- read.csv('/Users/leump/Desktop/2020-074-C-03/HASMC/data_origin.csv', row.names = 1, check.names = F)
+# 
+# d.sample <- read.csv('/Users/leump/Desktop/2020-074-C-03/HASMC/sample.csv', row.names = 1, check.names = F)
+# 
+# selected <- rownames(d.sample)
+# 
+# d.data <- d.data_origin[selected, ]
+# 
+# write.csv(d.data, '/Users/leump/Desktop/2020-074-C-03/HASMC/data.csv')
+
+
+d.data <- read.csv('/Users/leump/Desktop/data_HASMC/data.csv', row.names = 1, check.names = F)
+
+d.sample <- read.csv('/Users/leump/Desktop/data_HASMC/sample.csv', row.names = 1, check.names = F)
+
+# sum1 <- function(x, na.omit = FALSE) {
+#   if(na.omit)
+#     x <- x[!is.na(x)]
+#   e <- x/sqrt(3)
+#   return(c('SE' = e))
+# }
+# 
+# 
+# 
+# 
+# d_se <- apply(d_sd, 2, sum1)
+# 
+# write.csv(d_sum, '/Users/leump/Desktop/2020-074-C-03/HUVEC/data_sum.csv')
+
+
+
+d_mean <- aggregate(d.data, by=list(type=d.sample$Group), mean)
+rownames(d_mean) <- d_mean[, 1]
+d_mean <- d_mean[, -1] %>% t()
+
+
+d_sd <- aggregate(d.data, by=list(type=d.sample$Group), sd)
+
+
+rownames(d_sd) <- d_sd[, 1]
+d_sd <- d_sd[, -1] %>% t()
+d_se <- apply(d_sd, 2, function(x) x / sqrt(3))
+
+write.csv(d_mean, '/Users/leump/Desktop/2020-074-C-03/HASMC/data_mean.csv')
+write.csv(d_sd, '/Users/leump/Desktop/2020-074-C-03/HASMC/data_sd.csv')
+write.csv(d_se, '/Users/leump/Desktop/2020-074-C-03/HASMC/data_se.csv')
+
+```
+
+```{r}
+
+v10 <- data.frame(
+ isotope = stringr::str_split_fixed(colnames(d10), 'M\\+', 2)[, 2] %>% stringr::str_replace_all("\\)","") %>% paste0("M+",.)
+) 
+
+
+library(rlang)
+catch_cnd(stop("An error"))
+catch_cnd(abort("An error"))
+
+
+HepG2 <- read.csv('/Users/leump/Desktop/HepG2.csv', check.names = F)
+
+
+HepG2$rownames <- apply(d10, 1, function(x) {
+  rownames = paste0(x[1], x[2], x[3], x[4])
+})
+
+
+
+
+show_condition <- function(code) {
+  tryCatch(
+    error = function(cnd) "error",
+    warning = function(cnd) "warning",
+    message = function(cnd) "message",
+    {
+      code
+      NULL
+    }
+  )
+}
+
+
+show_condition(stop("!"))
+show_condition(10)
+show_condition(warning("?!"))
+show_condition({
+  10
+  message("?")
+  warning("?!")
+})
+
+
+
+
+
+
+
+
+abort(
+  "error_not_found",
+  message = "Path `blah.csv` not found", 
+  path = "blah.csv"
+)
+#> Error: Path `blah.csv` not found
+
+log(letters)
+#> Error in log(letters): non-numeric argument to mathematical function
+log(1:10, base = letters)
+#> Error in log(1:10, base = letters): non-numeric argument to mathematical
+#> function
+
+
+my_log <- function(x, base = exp(1)) {
+  if (!is.numeric(x)) {
+    abort(paste0(
+      "`x` must be a numeric vector; not ", typeof(x), "."
+    ))
+  }
+  if (!is.numeric(base)) {
+    abort(paste0(
+      "`base` must be a numeric vector; not ", typeof(base), "."
+    ))
+  }
+
+  base::log(x, base = base)
+}
+
+my_log(letters)
+#> Error: `x` must be a numeric vector; not character.
+my_log(1:10, base = letters)
+#> Error: `base` must be a numeric vector; not character.
+
+
+abort_bad_argument <- function(arg, must, not = NULL) {
+  msg <- glue::glue("`{arg}` must {must}")
+  if (!is.null(not)) {
+    not <- typeof(not)
+    msg <- glue::glue("{msg}; not {not}.")
+  }
+  
+  abort("error_bad_argument", 
+    message = msg, 
+    arg = arg, 
+    must = must, 
+    not = not
+  )
+}
+
+stop_custom <- function(.subclass, message, call = NULL, ...) {
+  err <- structure(
+    list(
+      message = message,
+      call = call,
+      ...
+    ),
+    class = c(.subclass, "error", "condition")
+  )
+  stop(err)
+}
+
+err <- catch_cnd(
+  stop_custom("error_new", "This is a custom error", x = 10)
+)
+class(err)
+err$x
+
+
+my_log <- function(x, base = exp(1)) {
+  if (!is.numeric(x)) {
+    abort_bad_argument("x", must = "be numeric", not = x)
+  }
+  if (!is.numeric(base)) {
+    abort_bad_argument("base", must = "be numeric", not = base)
+  }
+
+  base::log(x, base = base)
+}
+
+
+my_log(letters)
+#> Error: `x` must be numeric; not character.
+my_log(1:10, base = letters)
+#> Error: `base` must be numeric; not character.
+
+
+
+
+
+
+d.ht <- read.csv('/Users/leump/Desktop/2020-107-B-01-问题/hypothesis_test.csv', row.names = 1, check.names = F, encoding = 'UTF-8')
+
+d.ht_fdr <- read.csv('/Users/leump/Desktop/2020-107-B-01-问题/hypothesis_test_fdr_adjusted.csv', row.names = 1, check.names = F, encoding = 'UTF-8')
+
+
+
+
+selected <- rownames(d.ht)
+
+d.ht_fdr <- d.ht_fdr[selected, ]
+
+
+
+d.ht_fdr_100 <- d.ht_fdr[1:100, ]
+
+selected <- rownames(d.ht)
+
+d.data <- read.csv('/Users/leump/Desktop/2020-107-B-01-问题/data.csv', row.names = 1, check.names = F, encoding = 'UTF-8')
+
+d.var <- read.csv('/Users/leump/Desktop/2020-107-B-01-问题/var.csv', row.names = 1, check.names = F, encoding = 'UTF-8')
+
+d.data_100 <- d.data[, selected]
+
+d.var_100 <- d.var[selected, ]
+
+
+
+
+
+
+
+write.csv(d.ht_100, file = '/Users/leump/Desktop/d.ht.csv')
+
+write.csv(d.ht_fdr, file = '/Users/leump/Desktop/d.ht_fdr.csv')
+
+
+
+
+
+
+
+d.ht <- read.csv('/Users/leump/Desktop/2020-107-B-01-问题/hypothesis_test.csv', row.names = 1, check.names = F, encoding = 'UTF-8')
+
+d.ht.fdr <- read.csv('/Users/leump/Desktop/2020-107-B-01-问题/hypothesis_test_fdr_adjusted.csv', row.names = 1, check.names = F, encoding = 'UTF-8')
+
+selected <- rownames(d.ht)
+
+d.ht.fdr <- d.ht.fdr[selected, ]
+
+write.csv(d.ht.fdr, file = '/Users/leump/Desktop/hypothesis_test_fdr_adjusted.csv')
+
+selected2 <- rownames(d.ht[1:100, ])
+
+d.data <- read.csv('/Users/leump/Desktop/2020-107-B-01-问题/新建文件夹/data.csv', row.names = 1, check.names = F, encoding = 'UTF-8')
+
+d.var <- read.csv('/Users/leump/Desktop/2020-107-B-01-问题/新建文件夹/var.csv', row.names = 1, check.names = F, encoding = 'UTF-8')
+
+d.data_100 <- d.data[, selected2]
+
+d.var_100 <- d.var[selected2, ]
+
+write.csv(d.data_100, file = '/Users/leump/Desktop/data_100.csv')
+
+write.csv(d.var_100, file = '/Users/leump/Desktop/var_100.csv')
+
+
+
+
+
+
+
+
+
+
+```
+
+```{r}
+load("/Users/leump/Desktop/data.RData")
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+
+res.ego <- enrichGO(
+    gene = d.ego$ENTREZID,
+    universe = gene.universe$ENTREZID,
+    keyType = "ENTREZID",
+    OrgDb = org.Hs.eg.db,
+    ont = "ALL",
+    pAdjustMethod = "BH",
+    minGSSize = 15,
+    maxGSSize = 500,
+    pvalueCutoff  = 0.05,
+    qvalueCutoff  = 0.1,
+    readable      = TRUE,
+    pool = T)
+```
+
+```{r 2020-069-C-01}
+f10 <- '/Users/leump/Desktop/data_069/01_2020-069-C-01 original data(umol per g protein) 原始数据.xlsx'
+
+d10 <- read.data(f10, type = 'data', sheet = 'data.csv')
+
+s10 <- read.data(f10, type = 'sample', sheet = 'sample.csv')
+
+v10 <- read.data(f10, type = 'var', sheet = 'var.csv')
+
+d11 <- d10[3:10, 455:480]
+s11 <- s10[3:10, ]
+group <- factor(s11$Group, levels = c('Synthetic', 'Contractile'))
+lvls <- forcats::fct_inorder(v10[, 1]) %>% levels()
+# ## group avergage
+# d <- t(d11) %>% 
+#   apply(1, function(x) {
+#     vaggregate(x, group, mean)
+#   }) %>% `rownames<-`(
+#     levels(group)
+#   ) %>% reshape2::melt() %>%
+#   mutate(
+#     Var1 = factor(Var1, levels = levels(group)),
+#     Var2 = factor(Var2, levels = lvls)
+#   )
+
+res <- lapply(colnames(d11),function(x){
+    out <- vaggregate(d11[, x], group, mean_cl_normal)
+    out <- matrix(unlist(out), nrow = nrow(out), ncol = ncol(out)) %>% t
+    data.frame(
+    Group = levels(group),
+    lipid = x,
+    mean = out[,1],
+    max = out[,3], 
+    min = out[,2]
+    )
+})%>% do.call(rbind, .) %>%
+  mutate(
+    Group = factor(Group, levels = levels(group)),
+    lipid = factor(lipid, levels = lvls)
+  )
+
+p <- ggplot(res, aes(x = lipid, y = mean, fill = Group)) +
+      geom_bar(stat = 'identity', position = 'dodge', colour="black") +
+      scale_fill_grey(start = 0, end = 0.95) +
+      geom_bar(stat = 'identity', position = 'dodge') +
+      guides(fill = guide_legend(title = 'Group', ncol = 1)) +
+      geom_errorbar(aes(ymin = mean, ymax = max),
+                    width = 0.5,
+                    position = position_dodge(0.9)) +
+      # geom_signif(annotations = c(0.001, "***"), 
+      #             y_position = c(4,5), 
+      #             xmin = c(0.75, 1.75), 
+      #             xmax = c(1.25, 2.25), 
+      #             tip_length = c(c(0.2, 0.05),c(0.2, 0.05)), 
+      #             vjust = -1) +
+      labs(x = '', 
+           y = 'umol/g protein',
+           title = ''
+           ) +
+      theme_bw() +
+      theme(axis.text.x = element_text(angle = 45, vjust = 0.9, hjust = 0.8))
+p
+
+
+
+
+
+ht <- read.csv('/Users/leump/Desktop/data_069/hypothesis_test.csv', row.names = 1, check.names = F)
+
+output.dir <- '/Users/leump/Desktop/'
+ggsave('barplot.pdf', p, file.path(output.dir), 
+       device = cairo_pdf, w = 8, h = 6, units = 'in')
+ggsave('barplot.tiff', p, file.path(output.dir),
+       device = 'tiff', w = 8, h = 6, units = 'in', 
+       compression = 'lzw+p', dpi = 300)
+```
+
+```{r}
+res <- read.csv('/Users/leump/Desktop/barplot.csv', row.names = 1)
+p1 <- ggplot(res, aes(x = lipid, y = mean, fill = Group)) +
+      geom_bar(stat = 'identity', position = 'dodge', colour="black") +
+      scale_fill_grey(start = 0, end = 0.95) +
+      geom_errorbar(aes(ymin = mean, ymax = max),
+                    width = 0.5,
+                    position = position_dodge(0.9)) + 
+      guides(fill = guide_legend(title = 'Group', ncol = 1)) +
+      coord_cartesian(ylim = c(100, 650)) +
+      labs(x = '', 
+           y = '',
+           title = ''
+           ) +
+      theme_bw() +
+      theme(axis.text.x = element_blank(),axis.ticks.x = element_blank())
+p1
+p2 <- ggplot(res, aes(x = lipid, y = mean, fill = Group)) +
+            geom_bar(stat = 'identity', position = 'dodge', colour="black") +
+            scale_fill_grey(start = 0, end = 0.95) +
+            guides(fill = guide_legend(title = 'Group', ncol = 1)) +
+            geom_errorbar(aes(ymin = mean, ymax = max),
+                          width = 0.5,
+                          position = position_dodge(0.9)) + 
+            coord_cartesian(ylim = c(0,60)) + 
+            labs(x = '', 
+                 y = 'umol/g protein',
+                 title = ''
+                 ) +
+            theme_bw() + 
+            theme(axis.text.x = element_text(angle = 45, vjust = 0.9, hjust = 0.8))
+p2
+p <- ggpubr::ggarrange(p1, p2, 
+               heights=c(2/5, 4/5),
+               ncol = 1, nrow = 2,
+               common.legend = TRUE,
+               legend="right",
+               align = "v"
+               )
+p
+
+output.dir <- '/Users/leump/Desktop/'
+ggsave('barplot.pdf', p, file.path(output.dir), 
+       device = cairo_pdf, w = 10, h = 8, units = 'in')
+ggsave('barplot.tiff', p, file.path(output.dir),
+       device = 'tiff', w = 10, h = 8, units = 'in', 
+       compression = 'lzw+p', dpi = 300)
+```
+
+```{r gg.gap}
+library(gg.gap)
+p1 <- ggplot(res, aes(x = lipid, y = mean, fill = Group)) +
+  geom_bar(stat = 'identity', position = 'dodge', colour="black") +
+  scale_fill_grey(start = 0, end = 0.95) +
+  guides(fill = guide_legend(title = '', ncol = 2)) +
+  geom_errorbar(aes(ymin = mean, ymax = max),
+                width = 0.5,
+                position = position_dodge(0.9)) + 
+  theme_bw() +
+  labs(x = '', 
+       y = 'mu*mol/g~protein',
+       title = ''
+       ) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.9, hjust = 0.8),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()
+        ) +
+  geom_signif(annotations = c(0.001))
+
+gg.gap(plot = p1,
+            segments = c(60, 100),
+            tick_width = c(10,100),
+            rel_heights = c(0.25, 0, 0.1),
+            ylim = c(0, 650)
+            )
+add.legend(plot = p1,
+           margin = c(top=1,right=1,bottom=1,left=1))
+
+cairo_pdf(paste0(output.dir, 'barplot', '.pdf'), width = 10, height = 8, 
+          onefile = T, family = 'Liberation Sans')
+gg.gap(plot = p1,
+            segments = c(60, 100),
+            tick_width = c(10,100),
+            rel_heights = c(0.25, 0, 0.1),# 设置分隔为的三个部分的宽度
+            ylim = c(0, 650)
+            )
+add.legend(plot = p1,
+           margin = c(top=500,right=1,bottom=1,left=1))
+dev.off()
+
+tiff(paste0(output.dir, 'barplot', '.tiff'), res = 300, width = 10, height = 8, 
+     compression = "lzw+p", units = 'in',
+     family = 'Liberation Sans')
+gg.gap(plot = p1,
+      segments = c(60, 100),
+      tick_width = c(10,100),
+      rel_heights = c(0.25, 0, 0.1),# 设置分隔为的三个部分的宽度
+      ylim = c(0, 650)
+      )
+add.legend(plot = p1,
+           margin = c(top=500,right=1,bottom=1,left=1))
+dev.off()
+```
+
+```{r}
+d10 <- read.csv('/Users/leump/Desktop/1.csv', row.names = 1, check.names = F, encoding = 'UTF-8')
+g <- factor(d10$Group1, levels = rownames(s10))
+group <- factor(d10$Group, levels = c('NC 上清', '凋 上清', 'QC'))
+
+
+d10 <- d10 %>% mutate(
+    Group <- factor(d10$Group, levels = c('NC 上清', '凋 上清', 'QC'))
+    )
+
+point_list <- lapply(colnames(d10[, -c(1:2)]), function(var.i){
+  p <- ggplot(d10, aes(x=g, y=d10[, var.i], color = group)) +
+    geom_point() +
+    labs(x = '', 
+         y = '',
+         title = var.i
+         ) +
+    guides(fill = guide_legend(title = 'Group', ncol = 1)) +
+    theme_bw()
+})
+
+filename_pdf <- file.path('/Users/leump/Desktop/',
+                          paste0('point', '.pdf'))
+cairo_pdf(filename_pdf, width = 6, height = 4, onefile = T, family = 'WenQuanYi Zen Hei')
+for (i in 1: 164) {
+  grid.draw(point_list[[i]])
+  }
+dev.off()
+```
+
+```{r}
+abort(
+  "error_not_found",
+  message = "Path `blah.csv` not found", 
+  path = "blah.csv"
+)
+```
+
+```{r}
+file.xlsx <- '/users/leump/Desktop/Metabolome_workflow/data/MetaboAnalyst.xlsx'
+worksheet.data <- 'data.csv'
+worksheet.sample <- 'sample.csv'
+worksheet.var <- 'var.csv'
+
+d10 <- read.data(file.xlsx, sheet = worksheet.data, type = 'data')
+s10 <- read.data(file.xlsx, sheet = worksheet.sample, type = 'sample')
+v10 <- read.data(file.xlsx, sheet = worksheet.var, type = 'var') 
+
+
+plyr::l_ply(unique(s10$Group), function(g.i) {
+  require(circlize)
+  ind <- which(s10$Group == g.i)
+  d <- d10[ind, ]
+  
+  attr1 <- getAttrs(colnames(d10))
+  
+  cor.out <- psych::corr.test(
+    d, method = 'spearman', ci = F, adjust = 'none'
+  )
+  
+  r <- reshape2::melt(cor.out$r)[reshape2::melt(lower.tri(cor.out$r))[, 'value'], ]
+  colnames(r)[3] <- 'spearman'
+  p <- reshape2::melt(cor.out$p)[reshape2::melt(lower.tri(cor.out$p))[, 'value'], ]
+  colnames(p)[3] <- 'p'
+  p$fdr <- p.adjust(p$p, method = 'fdr')
+  
+  testthat::expect_equal(
+    r$Var1, p$Var1
+  )
+  
+  testthat::expect_equal(
+    r$Var2, p$Var2
+  )
+  
+  cor.dis <- cbind(r, p[, c('p', 'fdr')])
+  
+  file.out <- file.path(output.dir, 'chord', paste0('spearman_group_', g.i, '.csv'))
+  if (!file.exists(file.out)) {
+    write.csv(cor.dis, file.out, row.names = F)
+  }
+  
+  d.chord <- cor.dis %>% 
+    dplyr::mutate(
+      class1 = attr1[Var1, 'class'],
+      class2 = attr1[Var2, 'class'],
+      sign = ifelse(spearman > 0, 1, -1),
+      col = ifelse(spearman > 0, 'red', 'green')
+    ) %>% dplyr::filter(
+    p < 0.05
+  ) %>% dplyr::group_by(class1, class2, col) %>%
+    dplyr::summarise(n = dplyr::n())
+  
+  n <- length(unique(c(d.chord$class1, d.chord$class2)))
+  circlize::chordDiagram(
+    d.chord[, c(1,2,4)],  grid.col = 2:(n+1), 
+    col = d.chord[, 'col'] %>% unlist,
+    order = c(
+      'LPC', 'PE', 'LPE', 'PC', 'SM', 'Cer'
+    ),
+    annotationTrack = c('axis', "grid"), 
+    preAllocateTracks = list(track.height = mm_h(5)))
+  
+  
+  circos.track(track.index = 1, panel.fun = function(x, y) {
+    circos.text(CELL_META$xcenter, CELL_META$ylim[1], CELL_META$sector.index, 
+                facing = "inside", niceFacing = TRUE, adj = c(0.5, -1), cex = 2)
+  }, bg.border = NA) # here set bg.border to NA is important
+  
+  # circos.clear()
+})
+
+```
+
+```{r N vs T}
+library(pROC)
+file.xlsx <- '/users/leump/Desktop/180_改/ROC/N vs T_改.xlsx'
+worksheet.data <- 'data.csv'
+worksheet.sample <- 'sample.csv'
+worksheet.var <- 'var.csv'
+
+d.data <- read.data(file.xlsx, sheet = worksheet.data, type = 'data')
+d.sample <- read.data(file.xlsx, sheet = worksheet.sample, type = 'sample')
+d.var <- read.data(file.xlsx, sheet = worksheet.var, type = 'var') 
+
+
+
+
+
+
+output_dir <- 'output/ROC'
+d <- d.data
+d <- scale(d, center = T, scale = T) 
+## remove columns with NA
+d <- d[, apply(d, 2, function(x) {!any(is.na(x))})]
+g <- factor(d.sample$Group,
+                levels =c("T",
+                          "N"
+                          ))
+d <- d[, results1]
+## filename
+filename_pdf <- file.path(output_dir, paste0('ROC', '.pdf'))
+# cairo_pdf(file = filename_pdf, width = 6, height = 6, onefile = T)
+roc_list <- lapply(colnames(d), function(var.i) {
+  # filename_tiff <- file.path(output_dir, paste0(var.i ,'_' ,'ROC', '.tiff'))
+  # tiff(file = filename_tiff, width = 6, height = 6,
+       # units = 'in', res = 300, compression = 'lzw+p')
+    plot.roc(g, d[, var.i], 
+             print.auc = T,
+             print.auc.cex = 1,
+             main = var.i, 
+             ci=TRUE, boot.n=100, ci.alpha=0.95, stratified=FALSE)
+  # dev.off()
+})
+# dev.off()
+
+
+
+
+
+dd_NT <- data.frame()
+for (i in 1: length(roc_list)) {
+  dd_NT[i, 1: 3] <- ci.auc(roc_list[[i]], conf.level = 0.95)
+}
+# rownames(dd_NT) <- colnames(d)
+rownames(dd_NT) <- results1
+# dd_order <- dd_NT[order(dd_NT$V2, decreasing = T), ]
+# results1 <- rownames(dd_order)
+
+write.csv(dd_NT, 'output/ROC/ROC.csv')
+```
+
+```{r N1 vs T1}
+library(pROC)
+file.xlsx <- '/users/leump/Desktop/180_改/ROC/N1 vs T1_改.xlsx'
+worksheet.data <- 'data.csv'
+worksheet.sample <- 'sample.csv'
+worksheet.var <- 'var.csv'
+
+d.data <- read.data(file.xlsx, sheet = worksheet.data, type = 'data')
+d.sample <- read.data(file.xlsx, sheet = worksheet.sample, type = 'sample')
+d.var <- read.data(file.xlsx, sheet = worksheet.var, type = 'var') 
+
+output_dir <- 'output/ROC'
+d <- d.data
+d <- scale(d, center = T, scale = T) 
+## remove columns with NA
+d <- d[, apply(d, 2, function(x) {!any(is.na(x))})]
+g <- factor(d.sample$Group,
+                levels =c("T1",
+                          "N1"
+                          ))
+
+
+x <- combn(levels(g), 2)[, 1]
+ind <- which(g %in% x)
+d_ind <- d[ind, ] %>% data.frame
+colnames(d_ind) <- colnames(d)
+g_ind <- g[ind, drop = T]
+d_ind <- d_ind[, results2]
+
+
+# ## filename
+filename_pdf <- file.path(output_dir, paste0('ROC', '.pdf'))
+# cairo_pdf(file = filename_pdf, width = 6, height = 6, onefile = T)
+roc_list <- lapply(colnames(d_ind), function(var.i) {
+  filename_tiff <- file.path(output_dir, paste0(var.i ,'_' ,'ROC', '.tiff'))
+  tiff(file = filename_tiff, width = 6, height = 6,
+  units = 'in', res = 300, compression = 'lzw+p')
+    plot.roc(g_ind, d_ind[, var.i], 
+             print.auc = T,
+             print.auc.cex = 1,
+             main = var.i, 
+             ci=TRUE, boot.n=100, ci.alpha=0.95, stratified=FALSE)
+  dev.off()
+})
+# dev.off()
+# 
+# dd_NT <- data.frame()
+# for (i in 1: length(roc_list)) {
+#   dd_NT[i, 1: 3] <- ci.auc(roc_list[[i]], conf.level = 0.95)
+# }
+# # rownames(dd_NT) <- colnames(d_ind)
+# 
+# # dd_order <- dd_NT[order(dd_NT$V2, decreasing = T), ]
+# # results2 <- rownames(dd_order)
+# rownames(dd_NT) <- results2
+# write.csv(dd_NT, 'output/ROC/ROC.csv')
+```
+
+```{r}
+library(rlang)
+# Create suppressConditions() that works like suppressMessages() and suppressWarnings() but suppresses everything. Think carefully about how you should handle errors.
+
+
+
+suppressWarnings(expr, classes = "warning")
+suppressMessages(expr, classes = "message")
+
+
+
+supressMessages <- function(expr, classes = "message") {
+  withCallingHandlers(expr, message = function(c) 
+    if (inherits(c, classes))      
+        tryInvokeRestart("muffleMessage"))
+}
+
+
+suppressWarnings({
+  warning("Uhoh!")
+  warning("Another warning")
+  1
+})
+#> [1] 1
+
+suppressMessages({
+  message("Hello there")
+  2
+})
+#> [1] 2
+
+suppressWarnings({
+  message("You can still see me")
+  3
+})
+#> You can still see me
+#> [1] 3
+
+
+
+
+
+suppressConditions <- function(expr) {
+  tryCatch(
+    error = function(c) { }
+  )
+  suppressWarnings(expr)
+  suppressMessages(expr)
+}
+
+
+suppressMessages(suppressWarnings(expr))
+
+suppressConditions <- function(expr) {
+  tryCatch(
+    error = function(cnd) {
+      
+    },
+    withCallingHandlers(
+      message = suppressWarnings(),
+      warning = suppressMessages(),
+      expr
+    )
+  )
+}
+
+
+suppressConditions({
+  message("Hello there")
+  warning("Another warning")
+  abort('error')
+})
+
+
+
+
+
+
+
+
+
+suppressConditions <- function(expr) {
+    tryCatch(
+        error = function(cnd) {
+            invisible(cnd_muffle(cnd))
+        },
+        withCallingHandlers(
+            message = function(cnd) {
+                if (inherits(cnd, 'message'))
+                    tryInvokeRestart("muffleMessage")
+            },
+            warning = function(cnd) {
+                if (inherits(cnd, 'warning'))
+                    tryInvokeRestart("muffleWarning")
+            },
+            expr
+        )
+    )
+}
+
+suppressConditions(message('hi message'))
+
+suppressConditions(warning('hi warning'))
+
+suppressConditions(stop('hi error'))
+
+
+
+
+bottles_of_beer <- function(i = 0) {
+  message(
+    "There are ", i, " bottles of beer on the wall, ", 
+    i, " bottles of beer."
+  )
+  while(i > 0) {
+    tryCatch(
+      Sys.sleep(1),
+      interrupt = function(err) {
+        i <<- i - 1
+        if (i > 0) {
+          message(
+            "Take one down, pass it around, ", i, 
+            " bottle", if (i > 1) "s", " of beer on the wall."
+          )
+        
+        }
+        stop()
+      }
+    )
+  }
+  message(
+    "No more bottles of beer on the wall, ", 
+    "no more bottles of beer."
+  )
+}
+
+
+
+
+
+
+
+
+
+
+```
+
+```{r Upset}
+output_dir <- 'output/'
+d.ht <- read.csv(
+  file = '/Users/leump/Desktop/2020-066-B-05+06/data/2020-066-B-06/report/05_Hypothesis_test/hypothesis_test.csv',
+  row.names = 1,
+  check.names = F
+)
+
+d10 <- d.ht %>%
+  mutate(
+    rn = rownames(d.ht),
+    `3-30 day/0 day` = ifelse(`Dunn: 3-30 day:0 day` < 0.05, 1, 0),
+    `40-60 day/0 day` = ifelse(`Dunn: 40-60 day:0 day` < 0.05, 1, 0),
+    `40-60 day/3-30 day` = ifelse(`Dunn: 40-60 day:3-30 day` < 0.05, 1, 0)
+  ) %>%
+  select(
+    rn:last_col()
+  )
+
+
+
+library(UpSetR)
+
+
+
+
+## 绘制集合图
+wn_upset <- function(list,bar_cor='lightblue2',point_cor = 'blue',keep.order=F,order.by=c("freq","degree")[1]){
+    # list 传入数据为一个list
+    # bar_cor 上方条形图的填充颜色
+    # point_cor 共有集合点阵图的颜色
+    # keep.order 根据list中的向量顺序展示样本，默认为FALSE，此时按照样本中物种数量由多至少顺序展示
+    # order.by是否按照频数和度进行排序，默认矩阵先按度，然后按频率排序
+    # 定义颜色体系
+    require(RColorBrewer,quietly = T,warn.conflicts =F)
+    corlor = c(brewer.pal(12,'Set3'),brewer.pal(12,'Paired'),brewer.pal(11,'Spectral'))
+    require(UpSetR,quietly = T,warn.conflicts =F)
+    g=upset(fromList(list), 
+            nsets = length(list),
+            sets=names(list),keep.order=keep.order,
+            point.size = 2.5, 
+            line.size = 0.20, 
+            mb.ratio = c(0.55, 0.45), 
+            text.scale = c(1.5,1, 1.5, 1, 1,1),
+            # 上方条形图的填充颜色
+            main.bar.color=bar_cor,mainbar.y.label = "Intersection Size",
+            # 下方条形图的填充颜色
+            sets.bar.color=corlor[1:length(list)],
+            matrix.color = point_cor,
+            sets.x.label = "Set Size",
+            order.by = order.by,
+            shade.color = brewer.pal(9,'BuPu')[2], 
+            shade.alpha = 0.70, 
+            matrix.dot.alpha = 0.85)
+  return(g)
+}
+
+A <- subset(d10, d10$`3-30 day/0 day` == 1)
+A <- A[, 1:2]
+B <- subset(d10, d10$`40-60 day/0 day` == 1)
+B <- B[, c(1, 3)]
+C <- subset(d10, d10$`40-60 day/3-30 day` == 1)
+C <- C[, c(1, 4)]
+
+df_list <- list(`3-30 day/0 day` = cbind(A$rn, A$`3-30 day/0 day`), 
+                `40-60 day/0 day` = cbind(B$rn, B$`40-60 day/0 day`), 
+                `40-60 day/3-30 day` = cbind(C$rn, C$`40-60 day/3-30 day`)
+                )
+
+
+cairo_pdf('output/Upset.pdf', width = 6, height = 4, family = 'sans')
+wn_upset(df_list)
+dev.off()
+
+## tiff
+tiff(file = 'output/Upset.tiff', width = 6, height = 4,
+     units = 'in', res = 300, compression = 'lzw+p')
+wn_upset(df_list)
+dev.off()
+
+
+
+```
+
+```{r table1}
+ds01 <- read.csv('/Users/leump/Desktop/table1.csv', 
+                 row.names = 1, check.names = F) 
+
+
+
+# ds01$in_DBP <- as.factor(ds01$in_DBP)
+
+
+
+
+print(tableone::CreateTableOne(
+    vars = colnames(d10),
+    strata = 'Group',
+    data = d10,
+    test = T
+), print = F) %>%  DT::datatable(
+  caption = 'Patient characteristics by Group',
+  extensions = c('FixedColumns', 'Buttons', 'Scroller'),
+  options = list(
+    fixedColumns = list(leftColumns = 1),
+    scrollX = T,
+    deferRender = TRUE,
+    scrollY = 500,
+    scroller = TRUE,
+    dom = 'Bfrtip',
+    buttons = c('copy', 'csv', 'excel', 'pdf', 'print')
+  )
+)
+
+
+df1 <- data.frame(Col1 = c("M999-00001", "M999-0000"), stringsAsFactors=FALSE)
+substring(df1[,1],2)
+
+```
+
+```{r 2020-144-B-01}
+# d10 <- read.csv('/Users/leump/Desktop/CONT.csv', row.names = 2, check.names = F, encoding = 'UTF-8')
+# 
+# d20 <- read.csv('/Users/leump/Desktop/PCOS.csv', row.names = 2, check.names = F, encoding = 'UTF-8')
+
+file.xlsx <- '/Users/leump/Desktop/2021-140-B-03/baseline.xlsx'
+d10 <- XLConnect::readWorksheetFromFile(
+  file.xlsx,
+  sheet = '1',
+  check.names = F,
+  rownames = 1
+)
+d20 <- XLConnect::readWorksheetFromFile(
+  file.xlsx,
+  sheet = '2',
+  check.names = F,
+  rownames = 1
+)
+d30 <- XLConnect::readWorksheetFromFile(
+  file.xlsx,
+  sheet = '3',
+  check.names = F,
+  rownames = 1
+)
+
+file.xlsx <- '/Users/leump/Desktop/2021-140-B-03/1.xlsx'
+d10 <- XLConnect::readWorksheetFromFile(
+  file.xlsx,
+  sheet = 'Sheet1',
+  check.names = F,
+  rownames = 1
+)
+
+# dd <- rbind(d10, d20, d30)
+
+# d <- dd[, c(3:4, 14:15, 21, 23, 25, 27)]
+
+# d <- dd[, c(3: 34)]
+
+g <- factor(d10$Group)
+
+ht <- sapply(d10, function(x) {
+  g_pair <- combn(levels(g), 2)
+  param.out <- oneway.test(x ~ g)
+  param.out <- param.out$p.value
+  nonparam.out <- kruskal.test(x ~ g)
+  nonparam.out <- nonparam.out$p.value
+  chisq_data <- table(data.frame(x, g))
+  chisq_test <- chisq.test(chisq_data)
+  chisq_test <- chisq_test$p.value
+  
+  # posthoc.out <- rosetta::posthocTGH(
+  #   x, g, 
+  #   p.adjust = 'none', 
+  #   formatPvalue = F
+  # )
+  #posthoc.out <- as.matrix(posthoc.out$output$games.howell)
+  
+  
+  res <- c(`Welch’s ANOVA` = param.out,
+           `Kruskal-Wallis test` = nonparam.out,
+           `chi-square test` = chisq_test)
+  res
+}) %>% as.data.frame %>% t
+
+
+write.csv(ht, '/Users/leump/Desktop/ht.csv',
+          row.names = T)
+
+# d_chisq <- read.csv('/Users/leump/Desktop/1.csv', row.names = 1, check.names = F, encoding = 'UTF-8')
+# chisq.test(d_chisq)
+```
+
+```{r}
+d10 <- read.csv('/Users/leump/Desktop/1.csv', row.names = 1, check.names = F, encoding = 'UTF-8')
+
+d20 <- read.csv('/Users/leump/Desktop/2.csv', row.names = 1, check.names = F, encoding = 'UTF-8')
+
+dd <- intersect(rownames(d10), rownames(d20))
+
+d11 <- d10[dd, ] %>% data.frame()
+rownames(d11) <- dd
+
+d21 <- d20[dd, ] %>% data.frame()
+rownames(d21) <- dd
+
+ddd <- cbind(d11, d21)
+
+write.csv(ddd, '/Users/leump/Desktop/sample.csv', row.names = T, 
+          fileEncoding = 'UTF-8')
+
+d.data <- read.csv('/Users/leump/Desktop/data_014/data_1/data.csv', row.names = 1, check.names = F)
+
+d.data_1 <- d.data[dd, ]
+
+write.csv(d.data_1, '/Users/leump/Desktop/data.csv', row.names = T)
+```
+
+```{r}
+data_20 <- read.csv('/Users/leump/Desktop/data/data_20.csv', row.names = 1, check.names = F)
+
+data_21 <- read.csv('/Users/leump/Desktop/data/data_21.csv', row.names = 1, check.names = F)
+
+var_20 <- read.csv('/Users/leump/Desktop/data/var_20.csv', row.names = 1, check.names = F)
+
+var_21 <- read.csv('/Users/leump/Desktop/data/var_21.csv', row.names = 1, check.names = F)
+```
+
+```{r}
+a1 <- colnames(data_20)
+a2 <- colnames(data_21)
+
+
+selected <- intersect(a1, a2)
+
+data_20_selected <- data_20[, selected]
+data_21_selected <- data_21[, selected]
+
+var_20_selected <- var_20[selected, ]
+var_21_selected <- var_21[selected, ]
+
+write.csv(data_20_selected, '/Users/leump/Desktop/data/data_20_selected.csv', row.names = T)
+write.csv(data_21_selected, '/Users/leump/Desktop/data/data_21_selected.csv', row.names = T)
+
+write.csv(var_20_selected, '/Users/leump/Desktop/data/var_20_selected.csv', row.names = T)
+write.csv(var_21_selected, '/Users/leump/Desktop/data/var_21_selected.csv', row.names = T)
+
+
+
+output_dir <- 'output/'
+d20 <- data_20
+d21 <- data_21
+
+g20 <- sample_20$Group
+g21 <- sample_21$Group
+## scale
+scale_rows = function(x){
+  m = apply(x, 1, mean, na.rm = T)
+  s = apply(x, 1, sd, na.rm = T)
+  return((x - m) / s)
+}
+scale_mat = function(mat, scale){
+  if(!(scale %in% c("none", "row", "column"))){
+      stop("scale argument shoud take values: 'none', 'row' or 'column'")
+  }
+  mat = switch(scale, 
+               none = mat, 
+               column = scale_rows(mat), 
+               row = t(scale_rows(t(mat)))
+               )
+  return(mat)
+}
+d20 <- scale_mat(d20, "row")
+d21 <- scale_mat(d21, "row")
+## color
+border_color <- 'gray'
+color <- colorRampPalette(c("navy", "white", "firebrick3"))(3)
+
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1: n]
+}
+
+gg_color_hue_row <- function(n) {
+  set.seed(123)
+  hues = sample(15:375, n + 1 , replace = F)
+  hcl(h = hues, l = 65, c = 100)[1: n] 
+}
+
+
+
+## annotation
+# col
+col_sample <- g20
+ncol_name <- nlevels(factor(g20, levels = c('ND', 'HFD', 'HFD+Met150')))
+col_name <- levels(factor(g20, levels = c('ND', 'HFD', 'HFD+Met150')))
+col_cols <- gg_color_hue(ncol_name)
+col_list <- list(structure(col_cols, names = c(col_name)))
+names(col_list) <- 'Group'
+
+top_annotation <-  HeatmapAnnotation(Group = g20,
+                                     col = col_list,
+                                     annotation_name_gp = gpar(fontface = 'bold'),
+                                     gp = gpar(col = "gray")
+                                     )
+# # row
+# nrow_name <- nlevels(factor(d.var[, "Class"]))
+# row_name <- levels(factor(d.var[, "Class"]))
+# row_cols <- gg_color_hue_row(nrow_name)
+# row_list <- list(structure(row_cols, names = c(row_name)))
+# names(row_list) <- 'Class'
+# 
+# left_annotation = rowAnnotation(Class = d.var$Class,
+#                                 col = row_list,
+#                                 # annotation_name_gp = gpar(fontface = 'bold'),
+#                                 gp = gpar(col = "gray")
+#                                 )
+
+Heatmap <- ComplexHeatmap::Heatmap(
+  t(d20),
+  name = 'SD',
+  ## color
+  col = circlize::colorRamp2(breaks = c(min(d20), 0, max(d20)), colors = color),
+  rect_gp = gpar(col = border_color),
+
+  ## cluster
+  cluster_rows = F,
+  cluster_columns = F,
+
+  ## row_names & fontsize
+  show_row_names = T,
+  row_names_gp = gpar(fontsize = 10),
+
+  ## col_names & fontsize
+  show_column_names = T,
+  column_names_gp = gpar(fontsize = 10),
+
+  ## annotation
+  top_annotation = top_annotation,
+  # left_annotation = left_annotation,
+  
+  ## annotation_size
+  heatmap_legend_param = list(legend_height = unit(2, 'in'),
+                              legend_weight = unit(2, 'in')
+                              )
+  )
+draw(Heatmap, 
+     merge_legends = T,
+     align_heatmap_legend = 'heatmap_top',
+     legend_grouping = 'original'
+     )
+
+cairo_pdf(paste0(output_dir, 'Heatmap', '.pdf'), width = 12, height = 18, onefile = T)
+draw(Heatmap,
+     merge_legends = T,
+     align_heatmap_legend = 'heatmap_top',
+     legend_grouping = 'original'
+     )
+dev.off()
+
+tiff(paste0(output_dir, 'Heatmap', '.tiff'), res = 300, width = 12, height = 18, compression = "lzw+p", units = 'in')
+draw(Heatmap, 
+     merge_legends = T,
+     align_heatmap_legend = 'heatmap_top',
+     legend_grouping = 'original'
+     )
+dev.off()
+```
+
+```{r}
+
+annotation_col <- read.csv('/Users/leump/Desktop/sample.csv', check.names = F, row.names = 1)
+
+
+col_sample <- c('Group', 'Batch')
+col_list <- lapply(1: length(col_sample), function(x) {
+  ncol_name <- nlevels(factor(annotation_col[, col_sample[x]]))
+  col_name <- levels(factor(annotation_col[, col_sample[x]]))
+  col_cols <- gg_color_hue(ncol_name)            
+  structure(col_cols, names = c(col_name))
+})
+
+
+g <- read.csv('/Users/leump/Desktop/sample.csv', check.names = F, row.names = 1)
+
+g1 <- g[stringr::str_detect(rownames(g), 'QC'), ]
+
+nrow(g1)
+
+f1 <- factor(g$Group)
+
+
+
+
+
+```
+
+```{r}
+library(purrr)
+
+list(1:5, c(1:10, NA))
+
+
+
+
+
+
+
+plus <- function(x, y) x + y
+
+x <- c(0, 0, 0, 0)
+map_dbl(x, plus, runif(1))
+#> [1] 0.0625 0.0625 0.0625 0.0625
+map_dbl(x, ~ plus(.x, runif(1)))
+#> [1] 0.903 0.132 0.629 0.945
+
+
+boostrap_summary <- function(x, f) {
+  f(sample(x, replace = TRUE))
+}
+
+simple_map(mtcars, boostrap_summary, f = mean)
+#> Error in mean.default(x[[i]], ...): 'trim' must be numeric of length one
+
+
+simple_map <- function(x, f, ...) {
+  out <- vector("list", length(x))
+  for (i in seq_along(x)) {
+    out[[i]] <- f(x[[i]], ...)
+  }
+  out
+}
+
+
+boostrap_summary <- function(x, f) {
+  f(sample(x, replace = TRUE))
+}
+
+simple_map(mtcars, boostrap_summary, mean)
+#> Error in mean.default(x[[i]], ...): 'trim' must be numeric of length one
+
+
+```
+
+```{r}
+library(purrr)
+
+
+
+as_mapper(~ . + 1)
+
+
+as_mapper(1, 2, 3)
+
+as_mapper(c("a", "b", "c"))
+
+as_mapper(list(1, "a", 2))
+
+pluck(1)
+
+as_mapper(~ runif(2))
+as_mapper(runif(2))
+
+
+
+
+
+d1 <- data.frame(
+  a = c('a', 'b', 'c'),
+  b = 1:3
+)
+
+str(d1)
+
+d2 <- t(d1) %>% as.data.frame()
+
+
+map(d1, sd)
+
+
+library(purrr)
+x1 <- data.frame(matrix((1:100),,))
+x2 <- data.frame(matrix((1:100),20,5))
+sd_data1 = map(x1,sd)
+sd_data2 = map(x2,sd)
+
+
+
+
+
+x <- list(
+  list(1, c(3, 9)),
+  list(c(3, 6), 7, c(4, 7, 6))
+)
+
+triple <- function(x) x * 3
+map(x, map, .f = triple)
+#> Error in .f(.x[[i]], ...): unused argument (function (.x, .f, ...)
+#> {
+#> .f <- as_mapper(.f, ...)
+#> .Call(map_impl, environment(), ".x", ".f", "list")
+#> })
+
+map(x, map, triple)
+
+
+
+simple_map <- function(x, f, ...) {
+  out <- vector("list", length(x))
+  for (i in seq_along(x)) {
+    out[[i]] <- f(x[[i]], ...)
+  }
+  out
+}
+
+boostrap_summary <- function(x, f) {
+  f(sample(x, replace = TRUE))
+}
+
+simple_map(mtcars, boostrap_summary, f = mean)
+
+simple_map(mtcars, boostrap_summary, mean)
+
+
+bootstrap <- function(df) {
+  df[sample(nrow(df), replace = TRUE), , drop = FALSE]
+}
+
+bootstraps <- map(1:10, ~ bootstrap(mtcars))
+# mpg ~ disp
+map(bootstraps, lm, formula = as.formula('mpg ~ disp')) %>%
+map(summary)
+
+
+
+
+
+library(purrr)
+
+
+
+by_cyl <- split(mtcars, mtcars$cyl)
+by_cyl
+
+
+
+xs <- map(1:8, ~ runif(10))
+xs[[1]][[1]] <- NA
+ws <- map(1:8, ~ rpois(10, 5) + 1)
+
+ws
+xs
+
+map_dbl(xs, mean)
+
+
+
+x <- map(1:6, ~ sample(1000, 10))
+
+
+
+
+x
+
+
+modify(df, ~ .x * 2)
+
+
+
+modify(mtcars, 1)
+
+head(mtcars)
+
+temp <- tempfile()
+dir.create(temp)
+
+cyls <- split(mtcars, mtcars$cyl)
+paths <- file.path(temp, paste0("cyl-", names(cyls), ".csv"))
+walk2(cyls, paths, write.csv)
+dir(temp)
+
+iwalk(cyls, ~ write.csv(.x, .y))
+dir(temp)
+
+trans <- list(
+  disp = function(x) x * 0.0163871,
+  am = function(x) factor(x, labels = c("auto", "manual"))
+)
+
+nm <- names(trans)
+mtcars[nm] <- map2(trans, mtcars[nm], function(f, var) f(var))
+
+mtcars[nm] <- map(nm, ~ trans[[.x]](mtcars[[.x]]))
+
+
+
+cyls <- split(mtcars, mtcars$cyl)
+paths <- file.path(tempdir(), paste0("cyl-", names(cyls), ".csv"))
+
+map2(cyls, paths, write.csv)
+
+
+
+
+
+
+library(XML)
+library(RCurl)
+pathways <- function(id){
+	url <- paste('https://hmdb.ca/metabolites/',id,'.xml',sep = '')
+	wp <- getURL(url)                                             
+	root <- xmlRoot(xmlParse(wp))								   
+	paths <-  xmlChildren(root[[25]][[4]])						  
+	pathways <- lapply(paths,function(x) xmlValue(x[[1]][[1]]))	  
+	return(pathways)
+}
+
+pathways("HMDB0000190") 
+
+
+
+
+   cor_heatmap = reactive({
+      req(T)
+      req(g_data()$hypothesis_test())
+      
+      print('correlation heatmap')
+      d <- g_data()$d1()
+      g <- g_data()$group()
+      d2 <- g_data()$d2()
+      d3 <- g_data()$d3()
+      d <- d[rownames(d2),]
+      ht <- g_data()$hypothesis_test()
+      cor_p <- input$cor_p
+      method <- input$cor_method
+      hc.order <- input$hc.order
+      show.lab <- input$show.lab
+      method <- ifelse(method == 'Square', "square", "circle")
+      cor_type <- input$cor_type
+        if (cor_type == 'Full') {
+          cor_type <- 'full'
+        } else if (cor_type == 'Upper') {
+          cor_type <- 'upper'
+        } else {
+          cor_type <- 'lower'
+        }
+      
+      color_palette <- input$cor_heatmap_color_palette
+        if (color_palette == 'navy_white_firebrick3') {
+          color <- colorRampPalette(c("navy", "white", "firebrick3"))(3)
+        } else if (color_palette == 'green_black_red') {
+          color <- colorRampPalette(c("green", "black", "red"))(3)
+        } else {
+          color <- colorRampPalette(rev(RColorBrewer::brewer.pal(n = 7, name = color_palette)))(3)
+        }
+      
+      cor_sig_lvl <- as.numeric(input$cor_sig_lvl)
+      show.legend = input$show.legend
+      ggtheme <- g_data()$ggtheme()
+
+      if (nlevels(g) == 1) return(list())
+      
+      p_col <- ifelse(cor_p == 'Parametric', 'parametric pvalue', 'non-parametric pvalue')
+      d.ht <- ht[, c(p_col), drop = F] %>% data.frame        
+      selected <- subset(d.ht, d.ht[, 1] < cor_sig_lvl) %>% rownames
+      
+      if (length(selected) > 0) {
+        d <- d[, selected]
+        cor1 <- cor(d, method = 'pearson') %>% as.data.frame
+        p_list <- list(ggcorrplot(cor1, 
+                                  method = method,
+                                  type = cor_type,
+                                  ggtheme = ggtheme,
+                                  show.legend = show.legend,
+                                  hc.order = hc.order,  ## hclust order
+                                  lab = show.lab, lab_size = 2, ## lab
+                                  legend.title = "Corr",
+                                  outline.col = "gray",
+                                  colors = color,
+                                  # ## insig = 'pch'
+                                  # sig.level = 0.05,
+                                  # insig = c("pch", "blank"), 
+                                  # pch = 4, 
+                                  # pch.col = "black",
+                                  # pch.cex = 5, 
+                                  tl.cex = 8
+                                  ))        
+      } else {
+        return(list())
+      }
+
+      print('end correlation heatmap')
+      p_list
+      
+    })
+
+```
+
+```{r}
+library(rlang)
+library(ggplot2)
+library(scales)
+
+power1 <- function(exp) {
+  function(x) {
+    x ^ exp
+  }
+}
+
+square <- power1(2)
+cube <- power1(3)
+
+square
+#> function(x) {
+#>     x ^ exp
+#>   }
+#> <environment: 0x7fe851f7ccc0>
+
+cube
+#> function(x) {
+#>     x ^ exp
+#>   }
+#> <bytecode: 0x7fe85512a410>
+#> <environment: 0x7fe85508c390>
+
+env_print(square)
+#> <environment: 0x7fe851f7ccc0>
+#> parent: <environment: global>
+#> bindings:
+#>  * exp: <dbl>
+
+env_print(cube)
+#> <environment: 0x7fe85508c390>
+#> parent: <environment: global>
+#> bindings:
+#>  * exp: <dbl>
+
+fn_env(square)$exp
+#> [1] 2
+
+fn_env(cube)$exp
+#> [1] 3
+
+
+
+x <- list(a = 1, b = 2)
+y <- env(a = 1, b = 2)
+lobstr::obj_addr(x)
+lobstr::obj_addr(y)
+x$a <- 3
+y$a <- 3
+lobstr::obj_addr(x)
+lobstr::obj_addr(y)
+
+
+
+
+
+
+
+g <- function(x) {
+  if (!env_has(current_env(), "a")) {
+    message("Defining a")
+    a <- 1
+    
+  } else {
+    a <- a + 1
+  }
+  a
+  current_env()
+}
+
+
+e <- g(5)
+
+
+env_print(g)
+
+fn_env(g)
+
+
+g <- function(x) {
+  if (!env_has(current_env(), "a")) {
+    message("Defining a")
+    a <- 1
+  } else {
+    a <- a + 1
+  }
+  
+  function() {
+    env_print(parent.env(current_env()))
+    a <<- a + 1
+    a
+  }
+}
+
+g(10)
+
+f <- g()
+
+
+f()
+f()
+f()
+f()
+
+
+
+
+
+29.9 * 3 + 19.9 + 29.9 * 6 + 34.99
+
+
+
+
+
+
+
+
+
+
+
+```
+
+```{r}
+boot_permute <- function(df, var) {
+  n <- nrow(df)
+  force(var)
+  
+  function() {
+    col <- df[[var]]
+    col[sample(n, replace = TRUE)]
+  }
+}
+
+x1 <- c(41, 30, 31, 38, 29, 24, 30, 29, 31, 38)
+
+ll_poisson2 <- function(x) {
+  n <- length(x)
+  sum_x <- sum(x)
+  c <- sum(lfactorial(x))
+
+  function(lambda) {
+    log(lambda) * sum_x - n * lambda - c
+  }
+}
+
+
+ll_poisson1 <- function(x) {
+  n <- length(x)
+
+  function(lambda) {
+    log(lambda) * sum(x) - n * lambda - sum(lfactorial(x))
+  }
+}
+ll1 <- ll_poisson1(x1)
+ll2 <- ll_poisson2(x1)
+
+
+
+
+bench::mark(optimise(ll1, c(0, 100), maximum = TRUE))
+
+power1 <- function(exp) {
+  function(x) {
+    x ^ exp
+  }
+}
+
+
+names <- list(
+  square = 2, 
+  cube = 3, 
+  root = 1/2, 
+  cuberoot = 1/3, 
+  reciprocal = -1,
+  z = 100
+)
+funs <- power(root)
+
+with(x, f(z))
+
+with(funs, root(100))
+
+funs(names$z)
+
+f(x$z)
+
+mean()
+
+x$f(z)
+f(z)
+
+root(100)
+
+
+x <- list(a = 1, b = 2)
+f <- mean
+z <- 1:10
+with(x, f(z))
+f(x$z)
+
+
+funs <- list(
+  mean = function(x) mean(x, na.rm = TRUE),
+  sum = function(x) sum(x, na.rm = TRUE)
+)
+
+attach(funs)
+#> The following objects are masked from package:base:
+#> 
+#>     mean, sum
+mean <- function(x) stop("Hi!")
+detach(funs)
+
+env_bind(globalenv(), !!!funs)
+mean <- function(x) stop("Hi!") 
+env_unbind(globalenv(), names(funs))
+
+
+
+```
+
+```{r}
+chatty <- function(f) {
+  force(f)
+  
+  function(x, ...) {
+    res <- f(x, ...)
+    cat("Processing ", x, "\n", sep = "")
+    res
+  }
+}
+f <- function(x) x ^ 2
+s <- c(3, 2, 1)
+
+purrr::map_dbl(s, chatty(f))
+#> Processing 3
+#> Processing 2
+#> Processing 1
+#> [1] 9 4 1
+
+library(purrr)
+library(memoise)
+
+x <- list(
+  c(0.512, 0.165, 0.717),
+  c(0.064, 0.781, 0.427),
+  c(0.890, 0.785, 0.495),
+  "oops"
+)
+
+out <- rep(NA_real_, length(x))
+for (i in seq_along(x)) {
+  out[[i]] <- sum(x[[i]])
+}
+#> Error in sum(x[[i]]): invalid 'type' (character) of argument
+out
+#> [1] 1.39 1.27 2.17   NA
+
+map_dbl(x, sum)
+#> Error in .Primitive("sum")(..., na.rm = na.rm): invalid 'type' (character) of
+#> argument
+
+safe_sum <- safely(sum)
+safe_sum
+#> function (...) 
+#> capture_error(.f(...), otherwise, quiet)
+#> <bytecode: 0x7fafd9e2de58>
+#> <environment: 0x7fafd9e2d9c0>
+
+
+str(safe_sum(x[[1]]))
+#> List of 2
+#>  $ result: num 1.39
+#>  $ error : NULL
+str(safe_sum(x[[4]]))
+#> List of 2
+#>  $ result: NULL
+#>  $ error :List of 2
+#>   ..$ message: chr "invalid 'type' (character) of argument"
+#>   ..$ call   : language .Primitive("sum")(..., na.rm = na.rm)
+#>   ..- attr(*, "class")= chr [1:3] "simpleError" "error" "condition"
+
+out <- map(x, safely(sum))
+str(out)
+
+out <- transpose(map(x, safely(sum)))
+str(out)
+
+ok <- map_lgl(out$error, is.null)
+ok
+
+x[!ok]
+
+out$result[ok]
+
+fit_model <- function(df) {
+  glm(y ~ x1 + x2 * x3, data = df)
+}
+
+models <- transpose(map(datasets, safely(fit_model)))
+ok <- map_lgl(models$error, is.null)
+
+# which data failed to converge?
+datasets[!ok]
+
+# which models were successful?
+models[ok]
+
+slow_function <- function(x) {
+  Sys.sleep(1)
+  x * 10 * runif(1)
+}
+system.time(print(slow_function(1)))
+
+system.time(print(slow_function(1)))
+
+fast_function <- memoise::memoise(slow_function)
+system.time(print(fast_function(1)))
+
+system.time(print(fast_function(1)))
+
+fib <- function(n) {
+  if (n < 2) return(1)
+  fib(n - 2) + fib(n - 1)
+}
+system.time(fib(23))
+
+system.time(fib(24))
+
+fib2 <- memoise::memoise(function(n) {
+  if (n < 2) return(1)
+  fib2(n - 2) + fib2(n - 1)
+})
+system.time(fib2(23))
+
+system.time(fib2(24))
+
+
+x <- -1:1
+p <- 1+x/1-x
+plot(p)
+```
+
+```{r}
+d10 <- read.csv('/Users/leump/Desktop/2020-180-C-01-补充/data/N/data_N.csv', 
+                row.names = 1, check.names = F)
+
+s10 <- read.csv('/Users/leump/Desktop/2020-180-C-01-补充/data/N/sample_N.csv', 
+                row.names = 1, check.names = F)
+
+d.var <- read.csv('/Users/leump/Desktop/2020-180-C-01-补充/data/N/var_N.csv', 
+                row.names = 1, check.names = F)
+
+group <- factor(s10$Group,
+                levels =c("N1",
+                          "N2",
+                          "N3",
+                          "N4",
+                          "N5",
+                          "N6",
+                          "N7",
+                          "N8"))
+
+
+d30 <- d10[, stringr::str_detect(colnames(d10), "")]
+
+colnames_d30 <- colnames(d30)
+
+d30 <- sapply(d30,function(x){
+              scale(x)
+              })
+
+rownames(d30) <- rownames(d10)
+
+d30 <- t(d30)
+
+d30_mean <- apply(d30,1,function(x){
+  plyr::vaggregate(x,group,mean)
+})%>%t
+colnames(d30_mean) <- levels(group)
+
+d30_mean
+
+
+
+## color
+border_color <- 'gray'
+color <- colorRampPalette(c("navy", "white", "firebrick3"))(3)
+
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1: n]
+}
+
+gg_color_hue_row <- function(n) {
+  set.seed(123)
+  hues = sample(15:375, n + 1 , replace = F)
+  hcl(h = hues, l = 65, c = 100)[1: n] 
+}
+
+## annotation
+# col
+col_sample <- levels(group)
+ncol_name <- nlevels(factor(group))
+col_name <- levels(factor(group))
+col_cols <- gg_color_hue(ncol_name)
+top_annotation <-  HeatmapAnnotation(Group = levels(group),
+                                     col = list('Group' = structure(col_cols, 
+                                                                  names = c(col_name))
+                                                ),
+                                     # annotation_name_gp = gpar(fontface = 'bold'),
+                                     gp = gpar(col = "gray")
+                                     )
+
+
+# row
+nrow_name <- nlevels(factor(d.var[, "Class"]))
+row_name <- levels(factor(d.var[, "Class"]))
+row_cols <- gg_color_hue_row(nrow_name)
+left_annotation = rowAnnotation(Class = d.var$Class,
+                                col = list('Class' = structure(row_cols,
+                                                               names = c(row_name))
+                                           ),
+                                # annotation_name_gp = gpar(fontface = 'bold'),
+                                gp = gpar(col = "gray")
+                                )
+
+col_number <- as.numeric(1.5)
+
+d <- d30_mean
+
+Heatmap <- ComplexHeatmap::Heatmap(
+  d,
+  name = 'SD',
+  ## color
+  col = circlize::colorRamp2(breaks = c(min(d), 0, max(d)), colors = color),
+  rect_gp = gpar(col = border_color),
+
+  ## cluster
+  cluster_rows = T,
+  cluster_columns = F,
+
+  ## row_names & fontsize
+  show_row_names = T,
+  row_names_gp = gpar(fontsize = 10),
+
+  ## col_names & fontsize
+  show_column_names = T,
+  column_names_gp = gpar(fontsize = 10),
+
+  ## annotation
+  top_annotation = top_annotation,
+  left_annotation = left_annotation,
+  
+  ## annotation_size
+  heatmap_legend_param = list(legend_height = unit(2, 'in'),
+                              legend_weight = unit(2, 'in')
+                              )
+  )
+
+output_dir <- '/Users/leump/Desktop/'
+cairo_pdf(paste0(output_dir, 'Heatmap_N.pdf'), width = 8, height = 22, onefile = T)
+draw(Heatmap, 
+     merge_legends = T,
+     align_heatmap_legend = 'heatmap_top',
+     legend_grouping = 'original'
+     )
+dev.off()
+
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

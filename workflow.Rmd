@@ -1,0 +1,2082 @@
+---
+title: "代谢组分析流程"
+bibliography: local.bib
+link-citations: yes
+output:
+  html_document: 
+    toc: yes
+    toc_float:
+      toc_collapsed: yes
+    toc_depth: 4
+    keep_md: yes
+    mode: selfcontained
+    css: css/style-1.css
+    number_sections: yes
+  word_document: default
+biblio-style: apalike
+---
+# 代谢组分析流程
+
+```{r, include=F, echo=F, message=F, warnings=F}
+source('rscript/setup.R')
+source('rscript/functions.R')
+source('rscript/app_functions.R')
+source('rscript/pathway_funs.R', encoding = 'UTF-8')
+source('rscript/app_functions_2.R')
+
+options(useFancyQuotes = FALSE)
+options(java.parameters = '-Xmx8000m')
+
+knitr::opts_chunk$set(
+  cache = T,
+  message = F,
+  dpi = 300
+)
+
+## English locale
+## 通路数据库采用的是KEGG<U+4EBA><U+7C7B>通路数据库
+Sys.setlocale(locale = "Chinese")
+
+# library(plyr)
+library(ggplot2)
+library(magrittr)
+library(MetaboAnalystR)
+library(kableExtra)
+library(dplyr)
+library(DT)
+library(plyr)
+library(grid)
+library(stringi)
+library(ComplexHeatmap)
+
+# library(extrafont)
+# loadfonts(device = 'win', quiet = T)
+# par(family = 'Liberation')
+# windowsFonts(
+#   serif = 'Liberation Serif',
+#   sans = 'Liberation Sans',
+#   mono = 'Liberation Mono'
+# )
+par(family = 'sans')
+## set document font family in _output.yml
+
+output_dir <- file.path('output')
+if (!dir.exists(output_dir)) {
+    dir.create(output_dir, recursive = T)
+}
+```
+
+```{r, read input files}
+file.xlsx <- '/Users/leump/Desktop/R/Github/Plot/data/Test/01_Original_data/QC.xlsx'
+
+d.data <- XLConnect::readWorksheetFromFile(
+  file.xlsx,
+  sheet = 'data.csv',
+  check.names = F,
+  rownames = 1
+)
+
+d.sample <- XLConnect::readWorksheetFromFile(
+  file.xlsx,
+  sheet = 'sample.csv',
+  check.names = F,
+  rownames = 1
+)
+
+d.var <- XLConnect::readWorksheetFromFile(
+  file.xlsx,
+  sheet = 'var.csv',
+  check.names = F,
+  rownames = 1
+)
+
+# d.data <- read.data(f10, type = 'data', sheet = 'data.csv')
+# 
+# d.sample <- read.data(f10, type = 'sample', sheet = 'sample.csv')
+# 
+# d.var <- read.data(f10, type = 'var', sheet = 'var.csv')
+
+testthat::expect_equal(
+  rownames(d.sample),
+  rownames(d.data)
+)
+
+testthat::expect_equal(
+  rownames(d.var),
+  colnames(d.data)
+)
+```
+
+## 代谢组总结(Metabolome)
+
+### 代谢物统计图(Metabolome Summary)
+
+```{r Metabolome Summary, results = 'asis', include = T}
+output_dir <- 'output/'
+tbl <- table(d.var[, "Class"])
+d <- data.frame(class = names(tbl), n = as.vector(tbl)) %>% 
+     dplyr::filter(stringr::str_trim(class) != '')
+Metabolome_Summary <- ggplot(d, aes(x = class, y = n, label = n)) +
+                      geom_bar(stat = 'identity', fill = 'gray40') +
+                      geom_text(vjust = -0.2) +
+                      scale_y_continuous(expand = expansion(mult = c(0, 0.1), add = c(0, 0))) +
+                      labs(x = '', y = 'Count', title = paste('Metabolome', 'summary')) +
+                      theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
+                      )
+Metabolome_Summary
+ggsave(plot = Metabolome_Summary, file.path(output_dir, 'Metabolome_Summary.pdf'), w = 7, h = 7)
+ggsave(plot = Metabolome_Summary, file.path(output_dir, 'Metabolome_Summary.tiff'),
+       w = 7, h = 7, units = 'in', compression = 'lzw+p', dpi = 300)
+```
+
+### 质量控制(QC)
+
+```{r QC, results = 'asis', include = T}
+output_dir <- 'output/'
+d <- d.data[c(1:43), ]
+g <- factor(d.sample$Group[1:43])
+pca <- FactoMineR::PCA(d, scale.unit = TRUE, graph = FALSE)
+
+PCA_QC_ind <- factoextra::fviz_pca_ind(FactoMineR::PCA(d), 
+                                       habillage = g,
+                                       axes = c(1,2),
+                                       label = F,
+                                       pointsize = 4, 
+                                       mean.point = F)
+
+PCA_QC_ind
+
+ggsave(plot = PCA_QC_ind, file.path(output_dir, 'PCA_QC_individual.pdf'), w = 7, h = 7)
+ggsave(plot = PCA_QC_ind, file.path(output_dir, 'PCA_QC_individual.tiff'), 
+       w = 7, h = 7, units = 'in', compression = 'lzw+p', dpi = 300)
+
+
+# Pairs_QC
+library(GGally)
+library(rlang)
+
+d <- log10(t(d.data[g == 'QC', ])) 
+d[!is.finite(d)] <- NA
+d <- as.data.frame(d)
+
+Pairs_QC <- GGally::ggpairs(d) + theme_bw()
+
+Pairs_QC
+
+ggsave(plot = Pairs_QC, file.path(output_dir, 'Pairs_QC.pdf'), w = 7, h = 7)
+ggsave(plot = Pairs_QC, file.path(output_dir, 'Pairs_QC.tiff'), 
+       w = 7, h = 7, units = 'in', compression = 'lzw+p', dpi = 300)
+```
+
+## 主成分分析(pca)
+变量很多的数据集当中，通常很多的变量之间会有一定的相关性。因此可以通过一些线性转获得能最大程度代表整体变化方向的维度，也就是主成分，从而降低数据的维度并能保留大部分原始数据的信息。主成分分析是一种常用的降维方法，通过找到一组互相不相关新变量来最大化表达原有数据的信息，让转换得到的数据更容易可视化和理解。主成分分析（PCA）也是代谢组学最常用的分析之一，可以从得分图看到不同样品之间的整体差异情况。比如可以观察不同的分组是否分开，具体在哪一个主成分上分开，以及同一组的样品的离散程度。如果有明显的离群值就值得我们特别的关注，可以查看原始数据或者利用热图找到这个样品的哪些代谢物含量过高或者过低。需要注意的是，仅通过统计分析的方法常常并不能完全准确的确定异常的样品，没有一个客观的阈值，还是需要研究者综合考虑。对各个主成分的贡献最大的代谢物也用柱状图呈现了出来，结合得分图我们可以大概了解样品在哪些代谢物的含量上有区别。左上碎石图显示主成分解释X变量方差的比例。越靠前的主成分解释的比例会越高，然后会逐渐过渡到平滑的区间。选择关注的主成分的数量时，一般会保留图中有较大落差的部分，也就是图形平滑之前的部分，实际中常用的通常是前2-3个主成分。其它的载荷图显示了在每个主成分上的载荷最高的前10个变量，载荷也称作贡献度，反映了变量和主成分之间的相关性。
+
+### 碎石图+载荷图(Scree plot & loading plot)
+
+```{r PCA_scree, results = 'asis', include = T, fig.width = 10, fig.height = 8}
+output_dir <- 'output/'
+d <- d.data[c(1:38), ]
+g <- factor(d.sample$Group[1:38],
+                levels =c("Group1",
+                          "Group2",
+                          "Group3"
+                          ))
+NPC <- 2
+# scree.plot
+pca <- FactoMineR::PCA(d, scale.unit = TRUE, graph = FALSE)
+ggtheme.loading <- theme_bw() + theme(axis.text.x = element_text(angle = 80, hjust = 1))
+
+scree.plot <- factoextra::fviz_screeplot(pca, addlabels = TRUE) +
+                          scale_y_continuous(expand = expansion(mult = c(0.05, 0.05), 
+                                                                add = c(0, 5))) +
+                          scale_x_discrete(expand = expansion(mult = c(0.05, 0.05), 
+                                                              add = c(0.25, 0.6))) +
+                          ggtheme.loading
+
+lst.plot <- lapply(1: NPC, function(x) {
+                   factoextra::fviz_contrib(pca, 
+                                            choice = "var",
+                                            axes = x,
+                                            top = 10
+                                            ) + 
+                   labs(x = '') + 
+                   ggtheme.loading
+                   })
+
+lst.all <- vector(mode = 'list', length = 1 + length(lst.plot))
+lst.all[[1]] <- scree.plot
+lst.all[2:length(lst.all)] <- lst.plot
+
+PCA_scree <- do.call(purrr::partial(gridExtra::grid.arrange, ncol = 2,), lst.all)
+PCA_scree
+ggsave('PCA_scree.pdf', PCA_scree, file.path(output_dir), device = cairo_pdf, 
+       w = 10, h = 10, units = 'in')
+ggsave('PCA_scree.tiff', PCA_scree, file.path(output_dir), device = 'tiff', 
+       w = 10, h = 10, units = 'in', compression = 'lzw+p', dpi = 300)
+```
+
+### 主成分得分图(Individual plot)
+
+```{r pca_ind, results = 'asis', include = T}
+output_dir <- 'output/'
+d <- d.data[c(1:38), ]
+g <- factor(d.sample$Group[1:38],
+                levels =c("Group1",
+                          "Group2",
+                          "Group3"
+                          ))
+pca <- FactoMineR::PCA(d, scale.unit = TRUE, graph = FALSE)
+
+npc <- 2
+comps <- list()
+ for (i in 1:(npc - 1)) {
+   for (j in (i+1) : npc)
+     comps[[length(comps) + 1]] <- c(i, j)
+ }
+# pca_ind
+pca_ind <- factoextra::fviz_pca_ind(
+    X = pca, axes = comps[[1]],
+    repel = F, # hide individual labels
+    habillage = g, # color by groups
+    # palette = cbPalette,
+    label = "all",
+    mean.point = T,
+    addEllipses = T, # Concentration ellipses
+    ellipse.type = 'norm',
+    ellipse.level = 0.95,
+    title = ''
+    ) + theme_bw()
+pca_ind
+ggsave('PCA_ind.pdf', pca_ind, file.path(output_dir), device = cairo_pdf, 
+       w = 8, h = 6, units = 'in')
+ggsave('PCA_ind.tiff', pca_ind, file.path(output_dir), device = 'tiff', 
+       dpi = 300, width = 8, height = 6, units = 'in',
+       compression = 'lzw+p')
+```
+
+## 聚类与热图(heatmap)
+除了主成分分析之外，组学研究中也经常用热图来观察样品的整体差异，可以方便发现异常值。热图用两种颜色来表示代谢物的含量高低。由于不同的代谢物含量差异比较大，我们会先将所有的代谢物标准化，这样所有样品中该代谢物的平均值接近于0会呈现为白色，低于平均值会成为负值，而高于平均值则为正值，颜色越深代表离平均值的差距越大。热图右边的色条表示颜色对应的数值，数值的意义表示是距离平均值多少个标准差。
+
+```{r heatmap, results = 'asis', include = T, fig.width = 12, fig.height = 18}
+output_dir <- 'output/'
+d <- d.data[c(1:38), ]
+g <- d.sample[stringr::str_detect(d.sample$Group, 'Group'), ]
+## scale
+scale_rows = function(x){
+  m = apply(x, 1, mean, na.rm = T)
+  s = apply(x, 1, sd, na.rm = T)
+  return((x - m) / s)
+}
+scale_mat = function(mat, scale){
+  if(!(scale %in% c("none", "row", "column"))){
+      stop("scale argument shoud take values: 'none', 'row' or 'column'")
+  }
+  mat = switch(scale, 
+               none = mat, 
+               column = scale_rows(mat), 
+               row = t(scale_rows(t(mat)))
+               )
+  return(mat)
+}
+d <- scale_mat(d, "row")
+
+## color
+border_color <- 'gray'
+
+color <- colorRampPalette(c("navy", "white", "firebrick3"))(100)
+
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1: n]
+}
+
+gg_color_hue_row <- function(n) {
+  set.seed(123)
+  hues = sample(15:375, n + 1 , replace = F)
+  hcl(h = hues, l = 65, c = 100)[1:n] 
+}
+
+## annotation
+# col
+col_sample <- g$Group
+ncol_name <- nlevels(factor(g[, "Group"]))
+col_name <- levels(factor(g[, "Group"]))
+col_cols <- gg_color_hue(ncol_name)
+top_annotation <-  HeatmapAnnotation(Group = g$Group,
+                                     col = list('Group' = structure(col_cols, 
+                                                                  names = c(col_name))
+                                                ),
+                                     annotation_name_gp = gpar(fontface = 'bold')
+                                     )
+
+# row
+nrow_name <- nlevels(factor(d.var[, "Class"]))
+row_name <- levels(factor(d.var[, "Class"]))
+row_cols <- gg_color_hue_row(nrow_name)
+left_annotation = rowAnnotation(Class = d.var$Class,
+                                col = list('Class' = structure(row_cols,
+                                                               names = c(row_name))
+                                           ),
+                                annotation_name_gp = gpar(fontface = 'bold'),
+                                width = unit(1, "cm")
+                                )
+
+Heatmap <- ComplexHeatmap::Heatmap(
+  t(d),
+  name = 'SD',
+  ## color
+  col = circlize::colorRamp2(c(-3, 0, 3), c("navyblue", "white", "firebrick")),
+  rect_gp = gpar(col = border_color),
+
+  ## cluster
+  cluster_rows = F,
+  cluster_columns = F,
+
+  ## row_names & fontsize
+  show_row_names = T,
+  row_names_gp = gpar(fontsize = 10),
+
+  ## col_names & fontsize
+  show_column_names = T,
+  column_names_gp = gpar(fontsize = 10),
+
+  ## annotation
+  top_annotation = top_annotation,
+  left_annotation = left_annotation,
+  
+  heatmap_legend_param = list(legend_height = unit(2, 'in')),
+  )
+
+draw(Heatmap, 
+     merge_legends = T,
+     align_heatmap_legend = 'heatmap_top',
+     legend_grouping = 'original'
+     )
+
+cairo_pdf(paste0(output_dir, 'heatmap', '.pdf'), width = 15, height = 25, onefile = T)
+draw(Heatmap,
+     merge_legends = T,
+     align_heatmap_legend = 'heatmap_top',
+     legend_grouping = 'original'
+     )
+dev.off()
+
+tiff(paste0(output_dir, 'heatmap', '.tiff'), res = 300, width = 15, height = 25, compression = "lzw+p", units = 'in')
+draw(Heatmap, 
+     merge_legends = T,
+     align_heatmap_legend = 'heatmap_top',
+     legend_grouping = 'original'
+     )
+dev.off()
+```
+
+## 正交偏最小二乘判别分析(OPLS-DA)
+主成分分析和聚类都是非监督学习，也就是建模的时候并没有利用分组的信息，而仅仅是利用代谢物的含量，只是在可视化的时候把不同的分组标注上去。非监督学习通常不能利用分组之间的差异将样品区分开。为了更好的区分不同的分组，就可以用监督学习的方法。而代谢组学研究中最常用的监督学习方法是正交偏最小二乘判别分析，也就是OPLS-DA。OPLS-DA和PLS-DA比较接近，PLS方法会找到许多和分组相关的成分，而OPLS(Trygg and Wold 2002)方法能够将X变量中与Y变量相关的信息集中在第一个主成分中，而其它的正交成分和Y无相关性，仅反映X中的内部结构。这样仅有一个成分用于预测，更容易理解和可视化。正交成分的个数的最优值是通过交叉验证得到，但有时正交成分并不显著，这时的模型就仅有一个预测成分，而没有正交成分。
+OPLS-DA得分图显示的是样本在预测成分（x轴）和正交成分（y轴）维度上的分布和分组的分布区间（Mahalanobis ellipse）。有的时候可能没有发现显著的正交成分，即正交成分的个数为0，就仅画出预测成分的得分图。
+R2X, R2Y分别是模型对X变量的解释性和Y变量的解释性，完全解释则数值为１。Q2Y是模型的预测性，最大值为１。解释性和预测性的区别在于，解释性反映了模型和建模数据的符合程度，而预测性反映了模型对于测试数据的预测能力，一般会更接近实际运用中对于未知样本的预测能力。合适的模型通常有比较高的R2Y和Q2Y的值。需要注意的是，对于不同的研究代谢组数据的模型表现可能会有区别，比如异质性高，表型和代谢相关性较弱的情况下，模型表现会比较差，建议参考同类型的研究来评估模型的表现。
+左上图表示的是随机置换Y以后得到的模型结果（用点表示）与原有模型结果（用两条水平线表示）的比较。P值是随机置换模型取得更高R2Y/Q2Y得分的比例。原有模型的R2Y和Q2Y如果明显好于随机置换后的结果，表明模型拟合得很好。如果研究样本量小于变量个数,或者随机置换的模型指标接近原有模型，容易有过拟合的问题，结果解读需谨慎。
+异常值检测图会把距离样本分布区域中心较远的值标注出来，可能是潜在的异常值，可以考虑结合主成分分析、热图还有原始数据综合判断。最后的ROC图是通过预测成分与分组的比较得到的。ROC图中曲线下方的面积，即AUC（Area Under the Curve），是最常用的评价分类模型表现的指标，AUC越接近于1模型的表现越好。ROC图的X轴和Y轴分别表示的是模型的特异性和敏感性。ROC是一条曲线而不是一个单一的点，因为OPLS-DA模型对于一个样品的分类结果是一个连续的数,两个组分别在0的两边。通过选择不同的阈值可以得到不同的分类结果，对应一个特异性和敏感性的值，或者是ROC曲线上的一个点。一系列这样的点连在一起组成了ROC曲线。计算特异性和敏感性需要设定一个阴性组合一个阳性组，比如野生型或者健康对照一般会当做阴性组，对应的阴性组和阳性组见图下方的说明。需要注意的是，在样品数量比较少的时候，即使AUC很高可能并不具有实际意义，一个原因是样本可能不能代表现实中的个体差异。
+类似于主成分分析，不同的变量对于模型分类能力的贡献也是不一样的。在OPLS-DA分析中会得到所有代谢物的VIP值，通常VIP>1是一个代谢物可以考虑用作生物标记物的必要条件，VIP值越大则其重要性越高。OPLS-DA只能用在两组分类的情况下，不同的两组间的比较得到的VIP值也是不同的。
+总结起来，运用OPLS-DA模型的时候，先考虑研究的目的是否需要一个预测的模型，如果希望展示生物标记物的预测能力，OPLS-DA是一个常用的模型。模型的现实意义和普适性，依赖于有代表性的样本和足够大的样品数量。报告中的OPLS-DA结果解读，可以先看看得分图中的区分情况，注意R2Y和Q2Y的得分。重要的是要看置换实验中P值是否大于0.05，如果是，模型的区分结果和AUC可能会被高估（通常是样品数量过少）。
+
+```{r oplsda, results = 'asis', include = T, fig.width = 12, fig.height = 16}
+output_dir <- 'output/'
+d <- d.data[c(1:38), ]
+d <- scale(d, center = T, scale = T)
+## remove columns with NA
+d <- d[, apply(d, 2, function(x) {!any(is.na(x))})]
+g <- factor(d.sample$Group[1:38],
+                levels =c("Group1",
+                          "Group2",
+                          "Group3"))
+
+opls_list <- apply(combn(levels(g), 2), 2, function(x) {
+                  ind <- which(g %in% x)
+                  d_ind <- d[ind, ]
+                  g_ind <- g[ind, drop = T]
+                  gpls <- ropls::opls(d_ind, g_ind, 
+                                      predI = 1, orthoI = 1, fig.pdfC = 'none',
+                                      crossvalI = min(7, nrow(d_ind))
+                                      )
+                  }) 
+for(i in 1:length(opls_list)) {
+    par(mfrow = c(3, 2))
+    permutation <- ropls::plot(opls_list[[i]], typeVc = 'permutation', parDevNewL = F)
+    overview <- ropls::plot(opls_list[[i]], typeVc = 'overview', parDevNewL = F)
+    outlier <- ropls::plot(opls_list[[i]], typeVc = 'outlier', parDevNewL = F)
+    x_score <- ropls::plot(opls_list[[i]], typeVc = 'x-score', parDevNewL = F, parCexMetricN = 0.8)
+    ROC <- pROC::plot.roc(pROC::roc(attr(opls_list[[i]], 'suppLs')$y,
+                              attr(opls_list[[i]], 'scoreMN')[, 1]),
+                          print.auc = T, print.auc.cex = 2,
+                          main = 'ROC')
+}
+
+for(i in 1:length(opls_list)) {
+  oplsda <- opls_list[[i]]
+
+  ## filename
+  filename_pdf <- file.path(
+  output_dir,
+  paste0('OPLSDA_', 
+         fs::path_sanitize(paste0(levels(attr(oplsda, 'suppLs')$y), 
+                collapse = '_'), replacement = '_'),
+         '.pdf'))
+  
+  filename_tiff <- file.path(
+  output_dir,
+  paste0('OPLSDA_', 
+         fs::path_sanitize(paste0(levels(attr(oplsda, 'suppLs')$y), 
+                collapse = '_'), replacement = '_'),
+         '.tiff'))  
+  ## pdf
+  cairo_pdf(file = filename_pdf, width = 8, height = 12, onefile = T) 
+  if(ropls::getSummaryDF(oplsda)['ort'] > 0) {
+    par(mfrow = c(3, 2))
+    permutation <- ropls::plot(opls_list[[i]], typeVc = 'permutation', parDevNewL = F)
+    overview <- ropls::plot(opls_list[[i]], typeVc = 'overview', parDevNewL = F)
+    outlier <- ropls::plot(opls_list[[i]], typeVc = 'outlier', parDevNewL = F)
+    x_score <- ropls::plot(opls_list[[i]], typeVc = 'x-score', parDevNewL = F, parCexMetricN = 0.8)
+    ROC <- pROC::plot.roc(pROC::roc(attr(opls_list[[i]], 'suppLs')$y,
+                              attr(opls_list[[i]], 'scoreMN')[, 1]),
+                          print.auc = T, print.auc.cex = 2,
+                          main = 'ROC')
+    } else {
+    par(mfrow = c(2, 2))
+    permutation <- ropls::plot(opls_list[[i]], typeVc = 'permutation', parDevNewL = F)
+    overview <- ropls::plot(opls_list[[i]], typeVc = 'overview', parDevNewL = F)
+    outlier <- ropls::plot(opls_list[[i]], typeVc = 'outlier', parDevNewL = F)
+    x_score <- ropls::plot(opls_list[[i]], typeVc = 'x-score', parDevNewL = F, parCexMetricN = 0.8)
+    }
+  dev.off()
+  
+  ## tiff
+  tiff(file = filename_tiff, width = 8, height = 12,
+       units = 'in', res = 300, compression = 'lzw+p')
+  if(ropls::getSummaryDF(oplsda)['ort'] > 0) {
+    par(mfrow = c(3, 2))
+    permutation <- ropls::plot(opls_list[[i]], typeVc = 'permutation', parDevNewL = F)
+    overview <- ropls::plot(opls_list[[i]], typeVc = 'overview', parDevNewL = F)
+    outlier <- ropls::plot(opls_list[[i]], typeVc = 'outlier', parDevNewL = F)
+    x_score <- ropls::plot(opls_list[[i]], typeVc = 'x-score', parDevNewL = F, parCexMetricN = 0.8)
+    ROC <- pROC::plot.roc(pROC::roc(attr(opls_list[[i]], 'suppLs')$y,
+                              attr(opls_list[[i]], 'scoreMN')[, 1]),
+                          print.auc = T, print.auc.cex = 2,
+                          main = 'ROC')
+    } else {
+    par(mfrow = c(2, 2))
+    permutation <- ropls::plot(opls_list[[i]], typeVc = 'permutation', parDevNewL = F)
+    overview <- ropls::plot(opls_list[[i]], typeVc = 'overview', parDevNewL = F)
+    outlier <- ropls::plot(opls_list[[i]], typeVc = 'outlier', parDevNewL = F)
+    x_score <- ropls::plot(opls_list[[i]], typeVc = 'x-score', parDevNewL = F, parCexMetricN = 0.8)
+    }  
+  dev.off()
+}
+
+## VIP
+for(i in 1:length(opls_list)) {
+  oplsda <- opls_list[[i]]
+  
+  tmp <- data.frame(VIP = sort(attr(oplsda, 'vipVn'), decreasing = T))
+
+  ## filename  
+  filename_csv <- file.path(
+  output_dir,
+  fs::path_sanitize(paste0('VIP_',
+                           paste0(levels(attr(oplsda, 'suppLs')$y), collapse = '_'),
+                           '.csv'), replacement = '_'))
+  write.csv(tmp,
+            file = filename_csv,
+            row.names = T,
+            fileEncoding = 'UTF-8')
+}
+```
+
+## 假设检验(hypothesis_test)
+
+```{r hypothesis_test, results = 'asis', include = F}
+output_dir <- 'output/'
+d <- d.data[c(1:38), ]
+g <- factor(d.sample$Group[1:38],
+                levels =c("Group1",
+                          "Group2",
+                          "Group3"
+                          ))
+
+ht <- sapply(d, function(x) {
+    ## combination of group pairs
+    g_pair <- combn(levels(g), 2)
+    ## Fold change
+    g_fold <- apply(g_pair, 2, function(pair.i) {
+        mean(x[g == pair.i[2]], na.rm = T) /
+            mean(x[g == pair.i[1]], na.rm = T)
+    })
+    ## Fold name
+    names(g_fold) <- apply(g_pair, 2, function(x) {
+        paste0('Fold: ', paste0(rev(x), collapse = '/'))
+    })
+    
+    # unpaired
+    if (nlevels(g) > 2) {    
+    ## parametric, welch's ANOVA
+    param.out <- oneway.test(x ~ g)
+    param.out <- param.out$p.value
+    ## posthoc names replace - by :
+    posthoc.names <- apply(
+                     combn(levels(g),2), 2,
+                     function(x) {paste0(rev(x), collapse=':')})
+    ### post-hoc: tukey and games howell 
+    posthoc.out <- userfriendlyscience::posthocTGH(
+        x, g, 
+        p.adjust = 'none', 
+        formatPvalue = F)
+    posthoc.out$output$tukey <- as.matrix(posthoc.out$output$tukey)
+    rownames(posthoc.out$output$tukey) <- posthoc.names
+    posthoc.out$output$games.howell <- as.matrix(posthoc.out$output$games.howell)
+    rownames(posthoc.out$output$games.howell) <- posthoc.names
+    ## non-parametric, kruskal-wallis
+    nonparam.out <- kruskal.test(x ~ g)
+    nonparam.out <- nonparam.out$p.value
+    ### post-hoc: dunn's test
+    dunn.out <- FSA::dunnTest(x ~ g, method = 'none')
+    dunn.out$res[, 'Comparison'] <- stringr::str_replace(
+        dunn.out$res[, 'Comparison'],
+        ' - ', ':')
+    dunn.out$res <- dunn.out$res[
+        match(
+            combn(levels(g), 2, function(x) { paste0(sort(x), collapse=":") }),
+            dunn.out$res[, 'Comparison']
+        ), ]
+    ## reverse the order
+    paste0Rev <- function(x) {paste0(rev(x), collapse = ':')}
+    dunn.out$res$Comparison <- combn(levels(g), 2, paste0Rev)
+    ## result
+    res <- c(`parametric pvalue` = param.out,
+             posthoc.out$output$tukey[, 'p'],
+             posthoc.out$output$games.howell[, 'p'],
+             `non-parametric pvalue` = nonparam.out,
+             dunn.out$res[, 'P.adj'],
+             g_fold)   
+    ## set names
+    n_comb <- nrow(posthoc.out$output$tukey)
+    names(res)[2:(1 + 2 * n_comb)] <- paste0(
+        rep(c('TukeyHSD: ', 'Games-Howell: '), each = n_comb),
+        names(res)[2:(1 + 2 * n_comb)])
+    names(res)[(3 + 2 * n_comb):(2 + 3 * n_comb)] <- paste0(
+        rep('Dunn: ', n_comb),
+        dunn.out$res$Comparison)   
+    } else {
+    param.out <- t.test(x ~ g)
+    param.out <- param.out$p.value
+    nonparam.out <- wilcox.test(x ~ g)
+    nonparam.out <- nonparam.out$p.value
+    res <- c(`parametric pvalue` = param.out,
+             `non-parametric pvalue` = nonparam.out,
+             g_fold)
+    }
+    res    
+    }) %>% t %>% as.data.frame
+# # paired
+# ht_paired <- sapply(d, function(x) {
+#     order_pair <- order(pair)
+#     x_order <- x[order_pair]
+#     g_order <- g[order_pair]
+#     paired.t.out <- t.test(x_order[g1], x_order[g2], paired = T)
+#     paired.wilcox.out <- wilcox.test(x_order[g1], x_order[g2], paired = T)
+#
+#     g1 <- which(g_order == levels(g)[1])
+#     g2 <- which(g_order == levels(g)[2])
+#     g_fold <- median(x_order[g2] / x_order[g1], na.rm = T)
+#
+#     c(paired.t.out$p.value, 
+#       paired.wilcox.out$p.value,
+#       g_fold)
+# }) %>% t
+# colnames(ht_paired) <- c('parametric pvalue', 
+#                          'non-parametric pvalue', 
+#                          paste0('Fold: ', levels(g)[2], '/', levels(g)[1])
+#                          )
+filename_csv <- file.path(output_dir, 'hypothesis_test.csv')
+write.csv(
+    ht,
+    file = filename_csv,
+    row.names = T, fileEncoding = 'UTF-8'
+    )
+```
+
+## 火山图(volcano plot)
+火山图同时展示代谢物的统计学显著程度（P value）和变化的幅度（fold change），能够帮助我们快速直观的发现那些既有统计学差异，也有相对较大的变化幅度的代谢物。倍数变化(fold change)的阈值并没有一个统一的标准，需要根据研究和数据的特点选择合适的值，从而筛选到需要重点关注的代谢物。
+倍数变化超过设定的阈值（大于1）有两种情况：大于该阈值或者小于其倒数。同时满足P值和倍数变化条件的代谢物会被标注出来。为了避免过于密集的文字标注，图中最多只标注了满足P值和倍数变化条件的代谢物中，P值最小的10个。P值采用T检验结果。火山图的标题表示了倍数变化计算时的分子和分母。
+
+```{r volcano plot, results = 'asis', include = T}
+output_dir <- 'output/'
+g <- factor(d.sample$Group[1:38],
+                levels =c("Group1",
+                          "Group2",
+                          "Group3"
+                          ))
+method <- c("parametric pvalue",
+            "Games-Howell", 
+            "TukeyHSD", 
+            "non-parametric pvalue",
+            "Dunn",
+            "Fold")[c(2, 6)]
+d.ht <- cbind(ht[, stringr::str_detect(colnames(ht), method[1])], 
+              ht[, stringr::str_detect(colnames(ht), method[2])]
+              ) %>% as.data.frame
+combs <- as.data.frame(combn(levels(g), 2))
+volcano_list <- lapply(combs, function(x) {
+  print(x)
+  d <- d.ht[, c(paste0('Games-Howell', ': ', paste0(rev(x), collapse = ':')),
+                        paste0('Fold: ', x[2], '/', x[1])), drop = F] %>%
+                        data.frame(check.names = F)
+  d[, 'label'] <- rownames(d.ht)
+  colnames(d) <- c('pvalue', 'fold', 'label')
+  d <- d %>% dplyr::mutate(
+             significant <- ifelse(pvalue >= 0.05, 'Not significant', 
+                                   ifelse(fold > 1.5, 
+                                          paste0('P<', 0.05, '&FC>', 1.5),
+                                          ifelse(fold < 1/1.5, 
+                                                 paste0('P<', 0.05, '&FC<1/', 1.5), 
+                                                 'Not significant'
+                                                 ))),
+             label = ifelse(significant != 'Not significant', label, '')
+  ) %>% dplyr::filter(
+        !is.na(pvalue) & !is.na(fold) & is.finite(fold) & fold > 0
+        )
+  color_values <- c('gray40', 'red', 'green') %>%
+  `names<-`(c('Not significant', 
+              paste0('P<', 0.05, '&FC>', 1.5),
+              paste0('P<', 0.05, '&FC<1/', 1.5)
+              ))
+  colnames(d) <- c('pvalue', 'fold', 'label', 'significant')
+  n_sig <- length(which(d$label != ''))
+  if (n_sig > 10) {
+      id_label <- intersect(
+          # order(rank(d[, 'pvalue']) + rank(-abs(log2(d[, 'fold'])))),
+          order(d[, 'pvalue']),
+          which(d$significant != 'Not significant')
+      )[1: 10]
+      d[-id_label, 'label'] <- ''
+  }
+  p <- ggplot(d, aes(x = log2(fold), y = -log10(pvalue))) +
+       geom_point(aes(color = significant)) +
+       scale_color_manual(values = color_values) +
+       ggrepel::geom_text_repel(aes(label = label),
+                                force = 1, max.iter = 2000) +
+       geom_vline(xintercept = log2(1.5), linetype = 'dashed', alpha = 0.5) +
+       geom_vline(xintercept = -log2(1.5), linetype = 'dashed', alpha = 0.5) +
+       geom_hline(yintercept = -log10(0.05), linetype = 'dashed', alpha = 0.5) +
+       scale_x_continuous(
+           limits = c(-max(abs(log2(d$fold))), max(abs(log2(d$fold)))),
+           expand = expansion(mult = c(0.05, 0.05), add = c(0, 0))) +
+       scale_y_continuous(expand = expansion(mult = c(0, 0.05), add = c(0, 0))) +
+       guides(color = guide_legend(title = 'Significant')) +
+       labs(title = paste0(x[2], '/', x[1]), 
+            x = 'log2(fold change)', 
+            y = '-log10(P value)') +
+       theme_bw()
+  p
+  })
+  names(volcano_list) <- apply(combs, 2, function(x) {paste0(rev(x), collapse = '_')})
+
+filename_pdf <- file.path(output_dir, 
+                          paste0('volcano', '.pdf'))
+cairo_pdf(file = filename_pdf,
+          width = 8,
+          height = 6,
+          onefile = T)
+volcano_list
+dev.off()
+
+volcano_list
+  
+for (i in 1: length(volcano_list)) {
+  filename_tiff <- file.path(
+    output_dir,
+    fs::path_sanitize(paste0('volcano', '_', names(volcano_list)[i], '.tiff'),
+                      replacement = '_'))
+  ggsave(filename_tiff, volcano_list[[i]],
+         device = 'tiff', dpi = 300,
+         width = 8, height= 6, units = 'in',
+         compression = 'lzw+p')
+}
+  
+```
+
+## 显著差异代谢物图(differential metabolites)
+显著差异代谢物图中展示了P值最小的前10个代谢物的倍数变化和P值。 柱状图横坐标表示log2(fold change)，上调为正值而下调为负值。
+
+```{r differential metabolites, results = 'asis', include = T, fig.width = 10, fig.height = 6}
+output_dir <- 'output/'
+g <- factor(d.sample$Group[1:38],
+                levels =c("Group1",
+                          "Group2",
+                          "Group3"
+                          ))
+method <- c("parametric pvalue",
+            "Games-Howell", 
+            "TukeyHSD", 
+            "non-parametric pvalue",
+            "Dunn",
+            "Fold")[c(2, 6)]
+d.ht <- cbind(ht[, stringr::str_detect(colnames(ht), method[1])], 
+              ht[, stringr::str_detect(colnames(ht), method[2])]
+              ) %>% as.data.frame
+max_label <- 10
+title <- paste0(levels(g)[2], '/', levels(g)[1])
+
+## print
+combs <- as.data.frame(combn(levels(g), 2))
+plyr::l_ply(combs, function(x) {
+  print(x)
+  d <- d.ht[, c(paste0('Games-Howell', ': ', paste0(rev(x), collapse = ':')),
+                        paste0('Fold: ', x[2], '/', x[1])), drop = F] %>%
+                        data.frame(check.names = F)
+  d[, 'label'] <- rownames(d.ht)
+  colnames(d) <- c('pvalue', 'fold', 'label')
+  d <- d %>% dplyr::mutate(
+             significant <- ifelse(pvalue >= 0.05, 'Not significant', 
+                                   ifelse(fold > 1.5, 
+                                          paste0('P<', 0.05, '&FC>', 1.5),
+                                          ifelse(fold < 1/1.5, 
+                                                 paste0('P<', 0.05, '&FC<1/', 1.5), 
+                                                 'Not significant'
+                                                 )))
+  ) %>% dplyr::filter(
+        !is.na(pvalue) & !is.na(fold) & is.finite(fold) & fold > 0
+        )
+  
+  ## sort by P value
+  d <- d[order(d$pvalue, decreasing = F), ]
+  ## select top n
+  d <- d[1:min(max_label, nrow(d)), ]
+  d <- d %>% mutate(
+       yval = nrow(d):1
+       )
+  
+  ylim.min <- 0.5
+  ylim.max <- nrow(d)
+  expand.y <- 1
+
+  ## labels in forest plot
+  # labels, could be extended to show more information
+  table_plot <- ggplot(d) +
+                theme_bw() +
+                geom_text(aes(label = label, x = 0, y = yval - 0.2), hjust = 0,
+                          ) +
+                theme(axis.text = element_blank(),
+                      axis.title = element_blank(),
+                      axis.ticks = element_blank(),
+                      panel.grid = element_blank(),
+                      panel.border = element_blank()
+                      ) +
+                scale_y_continuous(expand = c(0, expand.y), limits = c(ylim.min, ylim.max)) +
+                xlim(0, 3)
+  # Forest plot
+  forest1 <- ggplot(d, aes(x = yval, y = log2(fold))) +
+             theme_bw() +
+             geom_bar(stat = 'identity', position = 'dodge') +
+             geom_hline(yintercept = 0) +
+             theme(axis.line.x = element_line(),
+                   axis.text.y = element_blank(),
+                   axis.title.y = element_blank(),
+                   axis.ticks.y = element_blank(),
+                   panel.grid.major.y = element_blank(),
+                   panel.grid.minor.y = element_blank(),
+                   panel.grid.major.x = element_blank(),
+                   panel.grid.minor.x = element_blank(),
+                   panel.border = element_blank()
+                   ) +
+             coord_flip() +
+             scale_x_continuous(expand = c(0, expand.y), limits = c(ylim.min, ylim.max + 0.5)) +
+             ylab("log2(fold change)")
+  
+  sig1 <- ggplot(d, aes(y = yval - 0.2)) +
+          theme_bw() +
+          geom_text(aes(label = ifelse(
+              pvalue > 0.001,
+              round(pvalue, digits = 3),
+              format(pvalue, digits = 3, scientific = T)), x = 0), hjust = 0) +
+          # geom_text(label = 'sig', x = 0.1, y = nrow(d1) + 1.5) +
+          theme(axis.text = element_blank(),
+                axis.title = element_blank(),
+                axis.ticks = element_blank(),
+                panel.grid = element_blank(),
+                panel.border = element_blank()
+                ) +
+          xlim(0, 2) +
+          scale_y_continuous(expand = c(0, expand.y), limits = c(ylim.min, ylim.max))
+  
+  grid.newpage()
+  pushViewport(
+      viewport(
+          layout=grid.layout(2, 1,
+                             widths=unit(c(1),
+                                         'null'),
+                             heights=unit(c(1.2, 15),
+                                          "null"))))
+  
+  pushViewport(viewport(layout.pos.col=1, layout.pos.row=2))
+  g <- gridExtra:::gtable_cbind(
+       ggplotGrob(table_plot),
+       ggplotGrob(forest1),
+       ggplotGrob(sig1),
+       size = "max")
+  panels <- g$layout$r[grep("panel", g$layout$name)]
+  w <- c(2.3, 2, 0.6)
+  ws <- sum(w)
+  g$widths[panels] <- unit(w, "null")
+  grid.draw(g)
+  
+  popViewport()
+  
+  pushViewport(viewport(layout.pos.col = 1, layout.pos.row=1))
+  grid.lines(x = unit(c(0.01, 1), 'npc'),
+             y = unit(-0.1, 'npc'))
+  grid.lines(x = unit(c(0.01, 1), 'npc'),
+             y = unit(0.8, 'npc'),
+             gp = gpar(lwd = 2))
+  grid.text(x = unit(0.05, 'npc'), just = 'left',
+            y = unit(0.4, 'npc'),
+            label = paste0('Top metabolites in ', title))
+  grid.text(x = unit(0.65, 'npc'),
+            y = unit(0.4, 'npc'),
+            label = 'Fold change')
+  grid.text(x = unit(0.9, 'npc'),
+            y = unit(0.4, 'npc'),
+            label = 'P-value')
+})
+
+## pdf
+filename_pdf <- file.path(output_dir, 
+                          paste0('differential_metabolites', '.pdf'))
+cairo_pdf(file = filename_pdf,
+          width = 12,
+          height = 6,
+          onefile = T)
+combs <- as.data.frame(combn(levels(g), 2))
+plyr::l_ply(combs, function(x) {
+  print(x)
+  d <- d.ht[, c(paste0('Games-Howell', ': ', paste0(rev(x), collapse = ':')),
+                        paste0('Fold: ', x[2], '/', x[1])), drop = F] %>%
+                        data.frame(check.names = F)
+  d[, 'label'] <- rownames(d.ht)
+  colnames(d) <- c('pvalue', 'fold', 'label')
+  d <- d %>% dplyr::mutate(
+             significant <- ifelse(pvalue >= 0.05, 'Not significant', 
+                                   ifelse(fold > 1.5, 
+                                          paste0('P<', 0.05, '&FC>', 1.5),
+                                          ifelse(fold < 1/1.5, 
+                                                 paste0('P<', 0.05, '&FC<1/', 1.5), 
+                                                 'Not significant'
+                                                 )))
+  ) %>% dplyr::filter(
+        !is.na(pvalue) & !is.na(fold) & is.finite(fold) & fold > 0
+        )
+  
+  ## sort by P value
+  d <- d[order(d$pvalue, decreasing = F), ]
+  ## select top n
+  d <- d[1:min(max_label, nrow(d)), ]
+  d <- d %>% mutate(
+       yval = nrow(d):1
+       )
+  
+  ylim.min <- 0.5
+  ylim.max <- nrow(d)
+  expand.y <- 1
+
+  ## labels in forest plot
+  # labels, could be extended to show more information
+  table_plot <- ggplot(d) +
+                theme_bw() +
+                geom_text(aes(label = label, x = 0, y = yval - 0.2), hjust = 0,
+                          ) +
+                theme(axis.text = element_blank(),
+                      axis.title = element_blank(),
+                      axis.ticks = element_blank(),
+                      panel.grid = element_blank(),
+                      panel.border = element_blank()
+                      ) +
+                scale_y_continuous(expand = c(0, expand.y), limits = c(ylim.min, ylim.max)) +
+                xlim(0, 3)
+  # Forest plot
+  forest1 <- ggplot(d, aes(x = yval, y = log2(fold))) +
+             theme_bw() +
+             geom_bar(stat = 'identity', position = 'dodge') +
+             geom_hline(yintercept = 0) +
+             theme(axis.line.x = element_line(),
+                   axis.text.y = element_blank(),
+                   axis.title.y = element_blank(),
+                   axis.ticks.y = element_blank(),
+                   panel.grid.major.y = element_blank(),
+                   panel.grid.minor.y = element_blank(),
+                   panel.grid.major.x = element_blank(),
+                   panel.grid.minor.x = element_blank(),
+                   panel.border = element_blank()
+                   ) +
+             coord_flip() +
+             scale_x_continuous(expand = c(0, expand.y), limits = c(ylim.min, ylim.max + 0.5)) +
+             ylab("log2(fold change)")
+  
+  sig1 <- ggplot(d, aes(y = yval - 0.2)) +
+          theme_bw() +
+          geom_text(aes(label = ifelse(
+              pvalue > 0.001,
+              round(pvalue, digits = 3),
+              format(pvalue, digits = 3, scientific = T)), x = 0), hjust = 0) +
+          # geom_text(label = 'sig', x = 0.1, y = nrow(d1) + 1.5) +
+          theme(axis.text = element_blank(),
+                axis.title = element_blank(),
+                axis.ticks = element_blank(),
+                panel.grid = element_blank(),
+                panel.border = element_blank()
+                ) +
+          xlim(0, 2) +
+          scale_y_continuous(expand = c(0, expand.y), limits = c(ylim.min, ylim.max))
+  
+  grid.newpage()
+  pushViewport(
+      viewport(
+          layout=grid.layout(2, 1,
+                             widths=unit(c(1),
+                                         'null'),
+                             heights=unit(c(1.2, 15),
+                                          "null"))))
+  
+  pushViewport(viewport(layout.pos.col=1, layout.pos.row=2))
+  g <- gridExtra:::gtable_cbind(
+       ggplotGrob(table_plot),
+       ggplotGrob(forest1),
+       ggplotGrob(sig1),
+       size = "max")
+  panels <- g$layout$r[grep("panel", g$layout$name)]
+  w <- c(2.3, 2, 0.6)
+  ws <- sum(w)
+  g$widths[panels] <- unit(w, "null")
+  grid.draw(g)
+  
+  popViewport()
+  
+  pushViewport(viewport(layout.pos.col = 1, layout.pos.row=1))
+  grid.lines(x = unit(c(0.01, 1), 'npc'),
+             y = unit(-0.1, 'npc'))
+  grid.lines(x = unit(c(0.01, 1), 'npc'),
+             y = unit(0.8, 'npc'),
+             gp = gpar(lwd = 2))
+  grid.text(x = unit(0.05, 'npc'), just = 'left',
+            y = unit(0.4, 'npc'),
+            label = paste0('Top metabolites in ', title))
+  grid.text(x = unit(0.65, 'npc'),
+            y = unit(0.4, 'npc'),
+            label = 'Fold change')
+  grid.text(x = unit(0.9, 'npc'),
+            y = unit(0.4, 'npc'),
+            label = 'P-value')
+})
+dev.off()
+
+## tiff
+combs <- as.data.frame(combn(levels(g), 2))
+plyr::l_ply(combs, function(x) {
+  filename_tiff <- file.path(
+    output_dir, 
+    fs::path_sanitize(paste0('differential_metabolites', '_', x[2], '_', x[1], '.tiff'),
+                      replacement = '_'))
+  tiff(filename_tiff,
+       res = 300,
+       width = 12, height= 8, units = 'in',
+       compression = 'lzw+p')
+  d <- d.ht[, c(paste0("Games-Howell", ': ', paste0(rev(x), collapse = ':')), 
+                paste0('Fold: ', x[2], '/', x[1])), drop = F] %>% data.frame(check.names = F)
+  d[, 'label'] <- rownames(d.ht)
+  
+  colnames(d) <- c('pvalue', 'fold', 'label')
+  d <- d %>% dplyr::mutate(
+             significant <- ifelse(pvalue >= 0.05, 'Not significant', 
+                                   ifelse(fold > 1.5, 
+                                          paste0('P<', 0.05, '&FC>', 1.5),
+                                          ifelse(fold < 1/1.5, 
+                                                 paste0('P<', 0.05, '&FC<1/', 1.5), 
+                                                 'Not significant'
+                                                 )))
+  ) %>% dplyr::filter(
+        !is.na(pvalue) & !is.na(fold) & is.finite(fold) & fold > 0
+        )
+  
+  ## sort by P value
+  d <- d[order(d$pvalue, decreasing = F), ]
+  ## select top n
+  d <- d[1:min(max_label, nrow(d)), ]
+  d <- d %>% mutate(
+      yval = nrow(d):1
+  )
+  
+  ylim.min <- 0.5
+  ylim.max <- nrow(d)
+  expand.y <- 1
+
+  ## labels in forest plot
+  # labels, could be extended to show more information
+  table_plot <-
+      ggplot(d) +
+      theme_bw() +
+      geom_text(aes(label = label, x = 0, y = yval - 0.2), hjust = 0,
+                ) +
+      theme(axis.text = element_blank(),
+            axis.title = element_blank(),
+            axis.ticks = element_blank(),
+            panel.grid = element_blank(),
+            panel.border = element_blank()
+            ) +
+      scale_y_continuous(expand = c(0, expand.y), limits = c(ylim.min, ylim.max)) +
+      xlim(0, 3)
+  
+  
+  # Forest plot
+  forest1 <- ggplot(d, aes(x = yval, y = log2(fold))) +
+             theme_bw() +
+             geom_bar(stat = 'identity', position = 'dodge') +
+             geom_hline(yintercept = 0) +
+             theme(axis.line.x = element_line(),
+                   axis.text.y = element_blank(),
+                   axis.title.y = element_blank(),
+                   axis.ticks.y = element_blank(),
+                   panel.grid.major.y = element_blank(),
+                   panel.grid.minor.y = element_blank(),
+                   panel.grid.major.x = element_blank(),
+                   panel.grid.minor.x = element_blank(),
+                   panel.border = element_blank()
+                   ) +
+             coord_flip() +
+             scale_x_continuous(expand = c(0, expand.y), limits = c(ylim.min, ylim.max + 0.5)) +
+             ylab("log2(fold change)")
+  
+  sig1 <- ggplot(d, aes(y = yval - 0.2)) +
+          theme_bw() +
+          geom_text(aes(label = ifelse(
+              pvalue > 0.001,
+              round(pvalue, digits = 3),
+              format(pvalue, digits = 3, scientific = T)), x = 0), hjust = 0) +
+          # geom_text(label = 'sig', x = 0.1, y = nrow(d1) + 1.5) +
+          theme(axis.text = element_blank(),
+                axis.title = element_blank(),
+                axis.ticks = element_blank(),
+                panel.grid = element_blank(),
+                panel.border = element_blank()
+                ) +
+          xlim(0, 2) +
+          scale_y_continuous(expand = c(0, expand.y), limits = c(ylim.min, ylim.max))
+  
+  grid.newpage()
+  pushViewport(
+      viewport(
+          layout=grid.layout(2, 1,
+                             widths=unit(c(1),
+                                         'null'),
+                             heights=unit(c(1.2, 15),
+                                          "null"))))
+  
+  pushViewport(viewport(layout.pos.col=1, layout.pos.row=2))
+  g <- gridExtra:::gtable_cbind(
+       ggplotGrob(table_plot),
+       ggplotGrob(forest1),
+       ggplotGrob(sig1),
+       size = "max")
+  panels <- g$layout$r[grep("panel", g$layout$name)]
+  w <- c(2.3, 2, 0.6)
+  ws <- sum(w)
+  g$widths[panels] <- unit(w, "null")
+  grid.draw(g)
+  
+  popViewport()
+  
+  pushViewport(viewport(layout.pos.col = 1, layout.pos.row=1))
+  grid.lines(x = unit(c(0.01, 1), 'npc'),
+             y = unit(-0.1, 'npc'))
+  grid.lines(x = unit(c(0.01, 1), 'npc'),
+             y = unit(0.8, 'npc'),
+             gp = gpar(lwd = 2))
+  grid.text(x = unit(0.05, 'npc'), just = 'left',
+            y = unit(0.4, 'npc'),
+            label = paste0('Top metabolites in ', title))
+  grid.text(x = unit(0.65, 'npc'),
+            y = unit(0.4, 'npc'),
+            label = 'Fold change')
+  grid.text(x = unit(0.9, 'npc'),
+            y = unit(0.4, 'npc'),
+            label = 'P-value')
+  dev.off()
+})
+```
+
+## 箱状图和柱状图(boxplot and barplot)
+
+```{r boxplot, results = 'asis', include = T, fig.width = 10, fig.height = 8}
+output_dir <- 'output/'
+d <- d.data[c(1:38), ]
+g <- factor(d.sample$Group[1:38],
+                levels =c("Group1",
+                          "Group2",
+                          "Group3"
+                           ))
+unit <- 'peak~area'
+filename_pdf <- file.path(output_dir,
+                          paste0('boxplot', '.pdf'))
+boxplot_list <- lapply(colnames(d), function(var.i) {
+  p_matrix <- matrix(1, nrow = nlevels(g), ncol = nlevels(g),
+                     dimnames = list(levels(g), levels(g))    
+                     ) 
+  ## multcompLetters work on lower.tri
+  p_matrix[lower.tri(p_matrix)] <- ht[var.i, stringr::str_detect(colnames(ht), "Games-Howell")] %>% unlist
+  sig_letters <- multcompView::multcompLetters(p_matrix, threshold = 0.05)$Letters
+  d_sig <- data.frame(g = names(sig_letters), 
+                y = 1.05 * max(d[, var.i], na.rm = T)-0.05*min(d[, var.i], na.rm = T),
+                label = sig_letters)    
+  ## y-axis label
+  ylab <- ifelse(unit == ' ',
+                 'Concentration',
+                 parse(text = paste0('Concentration (', unit, ')'))
+                 )
+  p <- ggplot(d, aes(x = g, y = eval(parse(text = paste0('`', var.i, '`'))))) +
+       geom_boxplot(outlier.size = 0, notch = F) +
+       geom_jitter(width = 0.1) + 
+       geom_text(data = d_sig,
+                 aes(x = g, y = y, label = sig_letters)
+                 ) + 
+       scale_y_continuous(expand = c(0.1, 0)) + 
+       labs(x = '', title = var.i, y = ylab) + 
+       theme_bw()
+})
+cairo_pdf(filename_pdf, width = 8, height = 8, onefile = T)
+for (i in 1:ncol(d)) {
+  grid.draw(boxplot_list[[i]])
+  }
+dev.off()
+
+# boxplot_shown
+boxplot_rank <- order(ht[, 'parametric pvalue'])
+d_order <- d[, boxplot_rank[1: 4]]
+ht_order <- ht[boxplot_rank[1: 4], , drop = F]
+## boxplot_shown_list
+boxplot_shown_list <- lapply(colnames(d_order), function(var.i) {
+  p_matrix <- matrix(1, nrow = nlevels(g), ncol = nlevels(g),
+                     dimnames = list(levels(g), levels(g))    
+  ) 
+  ## multcompLetters work on lower.tri
+  p_matrix[lower.tri(p_matrix)] <- ht_order[var.i, stringr::str_detect(colnames(ht_order), "Games-Howell")] %>% unlist
+  sig_letters <- multcompView::multcompLetters(p_matrix, threshold = 0.05)$Letters
+  d_sig <- data.frame(g = names(sig_letters), 
+                      y = 1.05 * max(d_order[, var.i], na.rm = T)-0.05*min(d_order[, var.i], na.rm = T),
+                      label = sig_letters)    
+  ## y-axis label
+  ylab <- ifelse(unit == ' ',
+                 'Concentration',
+                 parse(text = paste0('Concentration (', unit, ')'))
+                 )   
+  p <- ggplot(d, aes(x = g, y = eval(parse(text = paste0('`', var.i, '`'))))) +
+    geom_boxplot(outlier.size = 0, notch = F) +
+    geom_jitter(width = 0.1) + 
+    geom_text(data = d_sig,
+              aes(x = g, y = y, label = sig_letters)
+    ) + 
+    scale_y_continuous(expand = c(0.1, 0)) + 
+    labs(x = '', title = var.i, y = ylab) + 
+    theme_bw()
+})
+ncols <- 2
+nrows <- ceiling(length(boxplot_shown_list) / ncols)
+boxplot_shown_list <- list(
+  boxplot = gridExtra::marrangeGrob(boxplot_shown_list, nrow= 2, ncol= 2, top = 4)
+)
+## pdf
+filename_pdf <- file.path(output_dir,
+                          paste0('boxplot', '_report.pdf'))
+cairo_pdf(filename = filename_pdf, width = 8, height = 8,
+          onefile = T)
+## tiff
+for (i in 1:length(boxplot_shown_list)) {
+  filename_tiff <- file.path(output_dir,
+                             paste0('boxplot', '_report_', i, '.tiff'))
+  print(boxplot_shown_list[[i]])
+  ggsave(filename_tiff, boxplot_shown_list[[i]],
+         device = 'tiff', dpi = 300,
+         width = 8, height = 8, units = 'in',
+         compression = 'lzw+p')
+}
+dev.off()
+## print
+print(boxplot_shown_list[[1]])
+```
+
+```{r barplot, results = 'asis', include = T, fig.width = 10, fig.height = 8}
+output_dir <- 'output/'
+d <- d.data[c(1:38), ]
+g <- factor(d.sample$Group[1:38],
+                levels =c("Group1",
+                          "Group2",
+                          "Group3"))
+filename_pdf <- file.path(output_dir,
+                          paste0('barplot', '.pdf'))
+unit <- 'peak~area'
+conf.int <- 0.95
+mult <- qnorm((1 + conf.int)/2)
+if (abs(conf.int - 0.68) < 0.01) mult = 1
+x_angle = 0
+h_just = 0.5
+v_just = 0
+
+barplot_list <- lapply(colnames(d), function(var.i) {
+  p_matrix <- matrix(1, nrow = nlevels(g), ncol = nlevels(g),
+                     dimnames = list(levels(g), levels(g))    
+                     ) 
+  ## multcompLetters work on lower.tri
+  p_matrix[lower.tri(p_matrix)] <- ht[var.i, stringr::str_detect(colnames(ht), "Games-Howell")] %>% unlist
+  sig_letters <- multcompView::multcompLetters(p_matrix, threshold = 0.05)$Letters
+  ymax <- vaggregate(d[, var.i], g, mean_se) %>%
+      unlist %>% max
+  d_sig <- data.frame(group = names(sig_letters), 
+                      # y = ymax * 1.05,
+                      # y = 1.05 * max(d[, var.i]) - 0.05 * min(d[, var.i]),
+                      # y = 1.1 * max(vaggregate(d[, var.i], g, mean_cl_normal)[3, ] %>% unlist),
+                      y = 1.05 * max(d[, var.i], na.rm = T) - 0.05 * min(d[, var.i], na.rm = T),
+                      label = sig_letters)   
+  ylab <- ifelse(unit == ' ',
+                 'Concentration',
+                 parse(text = paste0('Concentration (', unit, ')'))
+                 )  
+  p <- ggplot(d,
+              aes(x = g,
+                  y = eval(parse(
+                      text = paste0('`', var.i, '`')
+                  )))
+                  ) +
+       stat_summary(fun = mean,
+                    geom = 'bar',
+                    fill = 'gray80',
+                    color = 'black'
+                    ) +
+       stat_summary(fun.data = mean_se,
+                    fun.args = list(mult = mult),
+                    geom = 'errorbar',
+                    width = 0.2
+                    ) +
+       geom_jitter(width = 0.1) + 
+       geom_text(data = d_sig,
+                 aes(x = group, y = y, label = label)
+                 ) + 
+       scale_y_continuous(expand = c(0.1, 0)) +
+       labs(x = '', 
+            y = ylab,
+            title = var.i
+            ) +
+       theme(axis.text.x = element_text(angle = x_angle, vjust = v_just, hjust = h_just)) +
+       theme_bw()
+})
+cairo_pdf(filename_pdf, width = 8, height = 8, onefile = T)
+for (i in 1:ncol(d)) {
+  grid.draw(barplot_list[[i]])
+  }
+dev.off()
+
+# barplot_shown
+barplot_rank <- order(ht[, 'parametric pvalue'])
+d_order <- d[, barplot_rank[1: 4]]
+ht_order <- ht[barplot_rank[1: 4], , drop = F]
+## boxplot_shown_list
+barplot_shown_list <- lapply(colnames(d_order), function(var.i) {
+  p_matrix <- matrix(1, nrow = nlevels(g), ncol = nlevels(g),
+                     dimnames = list(levels(g), levels(g))    
+                     ) 
+  ## multcompLetters work on lower.tri
+  p_matrix[lower.tri(p_matrix)] <- ht_order[var.i, stringr::str_detect(colnames(ht_order), "Games-Howell")] %>% unlist
+  sig_letters <- multcompView::multcompLetters(p_matrix, threshold = 0.05)$Letters
+  ymax <- vaggregate(d_order[, var.i], g, mean_se) %>%
+      unlist %>% max
+  d_sig <- data.frame(group = names(sig_letters), 
+                      # y = ymax * 1.05,
+                      # y = 1.05 * max(d[, var.i]) - 0.05 * min(d[, var.i]),
+                      # y = 1.1 * max(vaggregate(d[, var.i], g, mean_cl_normal)[3, ] %>% unlist),
+                      y = 1.05 * max(d_order[, var.i], na.rm = T) - 0.05 * min(d_order[, var.i], na.rm = T),
+                      label = sig_letters)   
+  ylab <- ifelse(unit == ' ',
+                 'Concentration',
+                 parse(text = paste0('Concentration (', unit, ')'))
+                 )  
+  p <- ggplot(d,
+              aes(x = g,
+                  y = eval(parse(
+                      text = paste0('`', var.i, '`')
+                  )))
+                  ) +
+       stat_summary(fun = mean,
+                    geom = 'bar',
+                    fill = 'gray80',
+                    color = 'black'
+                    ) +
+       stat_summary(fun.data = mean_se,
+                    fun.args = list(mult = mult),
+                    geom = 'errorbar',
+                    width = 0.2
+                    ) +
+       geom_jitter(width = 0.1) + 
+       geom_text(data = d_sig,
+                 aes(x = group, y = y, label = label)
+                 ) + 
+       scale_y_continuous(expand = c(0.1, 0)) +
+       labs(x = '', 
+            y = ylab,
+            title = var.i
+            ) +
+       theme(axis.text.x = element_text(angle = x_angle, vjust = v_just, hjust = h_just)) +
+       theme_bw()
+})
+ncols <- 2
+nrows <- ceiling(length(barplot_shown_list) / ncols)
+barplot_shown_list <- list(
+  barplot = gridExtra::marrangeGrob(barplot_shown_list, nrow= 2, ncol= 2, top = 4)
+)
+## pdf
+filename_pdf <- file.path(output_dir,
+                          paste0('barplot', '_report.pdf'))
+cairo_pdf(filename = filename_pdf, width = 8, height = 8,
+          onefile = T)
+## tiff
+for (i in 1:length(barplot_shown_list)) {
+  filename_tiff <- file.path(output_dir,
+                             paste0('barplot', '_report_', i, '.tiff'))
+  print(barplot_shown_list[[i]])
+  ggsave(filename_tiff, barplot_shown_list[[i]],
+         device = 'tiff', dpi = 300,
+         width = 8, height = 8, units = 'in',
+         compression = 'lzw+p')
+}
+dev.off()
+## print
+print(barplot_shown_list[[1]])
+```
+
+## 代谢通路分析图(pathway analysis)
+
+```{r fix metaboanalyst db, eval=F}
+library(stringi)
+
+## compound_db.rds stri_encode(my.lib$name, '', 'UTF-8')
+## syns.db.rds Encoding <- 'UTF-8'
+
+## use English instead of Chinese
+## Encoding of non-ascii characters is latin1 if LC_ALL is English,
+## or unknow if it is Chinese
+# Sys.setlocale('LC_ALL', 'English')
+## iconvlist
+sessionInfo()
+
+l10n_info()
+
+details <- function(x) {
+    details <-
+        list(x=x,encoding=Encoding(x),bytes=nchar(x,"b"),chars=nchar(x,"c"),
+             width=nchar(x,"w"),raw=paste(charToRaw(x),collapse=":"))
+    print(t(as.matrix(details)))
+}
+
+## -----------------------------------
+## compound_db.rds
+##------------------------------------
+# compound_db.rds downloaded
+my.lib <- readRDS('database/metaboanalyst/20200223/original/compound_db.rds')
+# Warning message:
+# In readRDS("database/metaboanalyst/20200223/original/compound_db.rds") :
+#   strings not representable in native encoding will be translated to UTF-8
+#
+# Actually the strings are not translated to UTF-8
+#
+# We will get the above warning if the original file is used.
+
+plyr::llply(my.lib, function(x) {all(stri_enc_isutf8(x), na.rm = T)})
+## name is FALSE
+
+## check if each name is utf8 encoded
+name.isutf8 <- stri_enc_isutf8(my.lib$name)
+my.lib$name[which(!name.isutf8)]
+# stri_enc_detect(my.lib$name[which(!name.isutf8)])
+
+# write.csv(my.lib[which(!name.isutf8), ], 'database/metaboanalyst/20200223/compound_db_original.csv')
+
+# con <- file('database/metaboanalyst/20200223/compound_db_original.csv',
+#             open = "w+", encoding = "native.enc")
+# 
+# writeLines(my.lib$name, con = con, useBytes = TRUE)
+# close(con)
+
+pryr::bits(my.lib$name[which(!name.isutf8)[1]])
+
+name2 <- enc2utf8(my.lib$name)
+testthat::expect_equivalent(
+  pryr::bits(name2), pryr::bits(my.lib$name)
+) # 60/19024 mismatches
+
+
+name3 <- my.lib$name
+Encoding(name2) <- 'UTF-8'
+
+testthat::expect_equivalent(
+  pryr::bits(name2), pryr::bits(name3)
+) # 60/19024 mismatches
+
+testthat::expect_equivalent(
+  pryr::bits(name3), pryr::bits(my.lib$name)
+) ## pass
+
+my.lib$name <- stri_encode(my.lib$name, '', 'UTF-8')
+testthat::expect_equivalent(
+  pryr::bits(name2), pryr::bits(my.lib$name)
+) ## pass
+
+
+## conclusion::
+## enc2utf8 is equivalent to stri_encode
+## Encoding does not change bits
+
+# pryr::bits(cmpd.name.utf8[1])
+# write.csv(my.lib[which(!name.isutf8), ], 'database/metaboanalyst/20200223/compound_db_utf8.csv')
+readr::write_excel_csv(my.lib, 'database/metaboanalyst/20200223/metaboanalyst database/compound_db_UTF-8-BOM.csv')
+# con <- file('database/metaboanalyst/20200223/metaboanalyst database/compound_db_utf8.csv',
+#             open = "w+", encoding = "native.enc")
+# 
+# writeLines(paste0(colnames(my.lib), collapse =','), con = con, useBytes = TRUE)
+# for(i in 1:nrow(my.lib)) {
+#   writeLines(paste0(my.lib[i, ], collapse = ','), con = con, useBytes = TRUE)
+# }
+# 
+# close(con)
+
+
+pryr::bits(my.lib$name[which(!name.isutf8)[1]])
+
+saveRDS(my.lib, file = 'database/metaboanalyst/20200223/compound_db_utf8.rds')
+
+my.lib.utf8 <- readRDS('database/metaboanalyst/20200223/compound_db_utf8.rds')
+
+my.lib.utf8$name[which(!name.isutf8)]
+all(stri_enc_isutf8(my.lib$name))
+
+if (!file.exists('database/metaboanalyst/20200223/metaboanalyst database/compound_db.xlsx')) {
+  XLConnect::writeWorksheetToFile(my.lib, 
+            file = 'database/metaboanalyst/20200223/metaboanalyst database/compound_db.xlsx',
+            sheet = 'my.lib'
+            )
+}
+
+## -----------------------------------
+## syn_nms.rds
+##------------------------------------
+syns.db <- readRDS('database/metaboanalyst/20200223/original/syn_nms.rds')
+## "syns.vec"  "syns.list"
+## 19024
+
+name.isutf8 <- stri_enc_isutf8(syns.db$syns.vec)
+
+Encoding(syns.db$syns.vec) <- 'UTF-8'
+
+syns.db$syns.list <- purrr::map(syns.db$syns.list, function(x) {
+  Encoding(x) <- 'UTF-8'
+  x
+})
+
+
+saveRDS(syns.db, 'database/metaboanalyst/20200223/syn_nms_utf8.rds')
+
+syns.db.utf8 <- readRDS('database/metaboanalyst/20200223/syn_nms_utf8.rds')
+
+  
+if (!file.exists('database/metaboanalyst/20200223/metaboanalyst database/syn_nms.txt')) {
+  fout <- file('database/metaboanalyst/20200223/metaboanalyst database/syn_nms.txt', 'w', encoding = 'native.enc')
+  purrr::walk(seq_along(syns.db$syns.list), function(i) {
+    writeLines('#----------------------------------------', fout, useBytes = T)
+    writeLines(paste('# ', i), fout, useBytes = T)
+    writeLines('#----------------------------------------', fout, useBytes = T)
+    writeLines(paste0(syns.db$syns.list[[i]], collapse = '\n'), fout, useBytes = T)
+    writeLines('\n', fout, useBytes = T)
+  })
+  close(fout)
+}
+
+## -----------------------------------
+## smpdb_pathway.rda
+## current.msetlib
+## "id"        "name"      "member"    "reference" "image"
+##------------------------------------
+## 99 msets, 495 metabolites
+load('database/metaboanalyst/20200223/original/smpdb_pathway.rda')
+
+smpdb.msetlib <- current.msetlib
+
+## member is false
+plyr::llply(smpdb.msetlib, function(x) {all(stri_enc_isutf8(x), na.rm = T)})
+
+name.isutf8 <- stri_enc_isutf8(smpdb.msetlib$member)
+smpdb.msetlib$member[which(!name.isutf8)]
+
+smpdb.msetlib$member <- stri_encode(smpdb.msetlib$member, '', 'UTF-8')
+
+if (!file.exists('database/metaboanalyst/20200223/metaboanalyst database/smpdb_pathway.xlsx')) {
+  
+  XLConnect::writeWorksheetToFile(smpdb.msetlib, 
+            file = 'database/metaboanalyst/20200223/metaboanalyst database/smpdb_pathway.xlsx',
+            sheet = 'current.msetlib'
+            )
+  
+  my.lib[purrr::map(smpdb.msetlib$member, function(x) {
+    stringr::str_split(x, '; +')
+  }) %>% unlist %>% unique %>% sort(decreasing = F) %>%
+    match(my.lib$name), ] %>% 
+    XLConnect::writeWorksheetToFile(
+    file = 'database/metaboanalyst/20200223/metaboanalyst database/smpdb_pathway.xlsx',
+    sheet = 'compound'
+  )
+}
+## some metabolites do not match
+
+## -----------------------------------
+## kegg_pathway_new.rda
+##------------------------------------
+## 84 msets, 336 metabolites
+load('database/metaboanalyst/20200223/original/kegg_pathway.rda')
+
+kegg.msetlib <- current.msetlib
+
+## all true
+plyr::llply(kegg.msetlib, function(x) {all(stri_enc_isutf8(x), na.rm = T)})
+
+name.isutf8 <- stri_enc_isutf8(kegg.msetlib$member)
+kegg.msetlib$member[which(!name.isutf8)]
+
+kegg.msetlib$member <- stri_encode(kegg.msetlib$member, '', 'UTF-8')
+
+if (!file.exists('database/metaboanalyst/20200223/metaboanalyst database/kegg_pathway.xlsx')) {
+  
+  XLConnect::writeWorksheetToFile(kegg.msetlib, 
+            file = 'database/metaboanalyst/20200223/metaboanalyst database/kegg_pathway.xlsx',
+            sheet = 'current.msetlib'
+            )
+  
+  ## length 2286
+  cmpd.vec <- purrr::map(kegg.msetlib$member, function(x) {
+    stringr::str_split(x, '; +')
+  }) %>% unlist %>% unique %>% sort(decreasing = F)
+ 
+  data.frame(name = cmpd.vec) %>% dplyr::left_join(my.lib, by = 'name') %>% 
+    XLConnect::writeWorksheetToFile(
+    file = 'database/metaboanalyst/20200223/metaboanalyst database/kegg_pathway.xlsx',
+    sheet = 'compound'
+  )
+}
+
+## -----------------------------------
+## location.rda
+##------------------------------------
+load('database/metaboanalyst/20200223/original/location.rda')
+
+location.msetlib <- current.msetlib
+
+
+plyr::llply(location.msetlib, function(x) {all(stri_enc_isutf8(x), na.rm = T)})
+## name is FALSE
+
+# ## check if each name is utf8 encoded
+# name.isutf8 <- stri_enc_isutf8(my.lib$name)
+# my.lib$name[which(!name.isutf8)]
+
+if (!file.exists('database/metaboanalyst/20200223/metaboanalyst database/location.xlsx')) {
+  
+  XLConnect::writeWorksheetToFile(location.msetlib, 
+            file = 'database/metaboanalyst/20200223/metaboanalyst database/location.xlsx',
+            sheet = 'location'
+            )
+  
+  ## length 2286
+  cmpd.vec <- purrr::map(location.msetlib$member, function(x) {
+    stringr::str_split(x, '; +')
+  }) %>% unlist %>% unique %>% sort(decreasing = F)
+ 
+  data.frame(name = cmpd.vec) %>% dplyr::left_join(my.lib, by = 'name') %>% 
+    XLConnect::writeWorksheetToFile(
+    file = 'database/metaboanalyst/20200223/metaboanalyst database/location.xlsx',
+    sheet = 'compound'
+  )
+}
+
+## -----------------------------------
+## predicted.rda
+##------------------------------------
+load('database/metaboanalyst/20200223/original/predicted.rda')
+
+predicted.msetlib <- current.msetlib
+
+
+plyr::llply(predicted.msetlib, function(x) {all(stri_enc_isutf8(x), na.rm = T)})
+## name is FALSE
+
+## check if each name is utf8 encoded
+# name.isutf8 <- stri_enc_isutf8(my.lib$name)
+# my.lib$name[which(!name.isutf8)]
+
+if (!file.exists('database/metaboanalyst/20200223/metaboanalyst database/predicted.xlsx')) {
+  
+  XLConnect::writeWorksheetToFile(predicted.msetlib, 
+            file = 'database/metaboanalyst/20200223/metaboanalyst database/predicted.xlsx',
+            sheet = 'predicted'
+            )
+  
+  ## length 2286
+  cmpd.vec <- purrr::map(predicted.msetlib$member, function(x) {
+    stringr::str_split(x, '; +')
+  }) %>% unlist %>% unique %>% sort(decreasing = F)
+ 
+  data.frame(name = cmpd.vec) %>% dplyr::left_join(my.lib, by = 'name') %>% 
+    XLConnect::writeWorksheetToFile(
+    file = 'database/metaboanalyst/20200223/metaboanalyst database/predicted.xlsx',
+    sheet = 'compound'
+  )
+}
+
+## -----------------------------------
+## hsa.rda
+##------------------------------------
+load('database/metaboanalyst/20200223/original/hsa.rda')
+
+## length 1550
+cmpd.vec <- metpa$mset.list %>% unlist %>% unique
+
+if (!file.exists('database/metaboanalyst/20200223/metaboanalyst database/hsa.xlsx')) {
+  lapply(
+  seq_along(metpa$mset.list), function(i) {
+    data.frame(
+      pathway = names(metpa$mset.list)[i],
+      name = names(metpa$mset.list[[i]]),
+      kegg_id = metpa$mset.list[[i]]
+    )}) %>% do.call(rbind, .) %>% 
+  `rownames<-`(NULL) %>%
+    XLConnect::writeWorksheetToFile(
+    file = 'database/metaboanalyst/20200223/metaboanalyst database/hsa.xlsx',
+    sheet = 'hsa'
+  )
+  
+  data.frame(kegg_id = cmpd.vec) %>% dplyr::left_join(my.lib, by = 'kegg_id') %>%
+    XLConnect::writeWorksheetToFile(
+    file = 'database/metaboanalyst/20200223/metaboanalyst database/hsa.xlsx',
+    sheet = 'compound'
+  )
+}
+
+## -----------------------------------
+## export all the databases
+##------------------------------------
+list.rda <- list.files('database/metaboanalyst/MetaboAnalyst-4.93/resources/libs/kegg', '*.rda', full.names = T)
+
+rm(metpa)
+
+res <- lapply(list.rda, function(file.rda) {
+  print(file.rda)
+  load(file.rda)
+  cmpd.vec <- metpa$mset.list %>% unlist %>% unique
+  file.xlsx <- file.path('database/metaboanalyst/MetaboAnalyst-4.93/rda2xls',
+                         stringr::str_replace(fs::path_file(file.rda), 'rda', 'xlsx'))
+  
+  species_code <- fs::path_ext_remove(fs::path_file(file.rda))
+  
+  ## write to xlsx
+  if (!file.exists(file.xlsx)) {
+    lapply(
+      seq_along(metpa$mset.list), function(i) {
+        data.frame(
+          pathway = names(metpa$mset.list)[i],
+          name = names(metpa$mset.list[[i]]),
+          kegg_id = metpa$mset.list[[i]] %>% unname
+        )}) %>% do.call(rbind, .) %>% 
+      `rownames<-`(NULL) %>%
+      XLConnect::writeWorksheetToFile(
+        file = file.xlsx,
+        sheet = file.rda %>% fs::path_file() %>% fs::path_ext_remove()
+      )
+    
+    data.frame(kegg_id = cmpd.vec) %>% 
+      dplyr::left_join(my.lib, by = 'kegg_id') %>%
+      XLConnect::writeWorksheetToFile(
+        file = file.xlsx,
+        sheet = 'compound'
+      )
+  }
+  
+  # testthat::expect_equal(
+  #   names(metpa$mset.list), unname(metpa$path.ids), 
+  # )
+  # 
+  ## summary
+  mset.count <- sapply(metpa$mset.list, function(mset.i) {
+    length(mset.i)
+  })
+  
+  res <- tibble::tibble(
+    pathway_id = names(metpa$mset.list) %>% stringr::str_sub(4, -1),
+    pathway_name = names(metpa$path.ids)[match(names(metpa$mset.list), metpa$path.ids)],
+    !!species_code := mset.count
+  )
+  
+  res
+}) %>% purrr::reduce(dplyr::full_join, by = c('pathway_id', 'pathway_name'))
+
+write.csv(res, file = file.path('database/metaboanalyst/MetaboAnalyst-4.93/rda2xls', 'summary.csv'))
+```
+
+```{r database setting}
+# MetaboAnalystR version
+file.compound_db <- 'database/metaboanalyst/20200223/compound_db_utf8.rds'
+
+# syn_nms.rds
+file.syn_nms <- 'database/metaboanalyst/20200223/syn_nms_utf8.rds'
+
+## metabolite set library
+msea.library <- list(
+  'smpdb_pathway' = c(
+    name = 'Pathway-associated metabolite sets (SMPDB) (Oct2019)',
+    path = 'database/metaboanalyst/20200223/original/smpdb_pathway.rda',
+    file = 'smpdb_pathway.rda',
+    desc_en = 'This library contains 99 metabolite sets based on normal human metabolic pathways.',
+    desc_cn = '这个数据库包含99个基于正常人类代谢通路的代谢物集合，也适用于一般哺乳动物'
+  ),
+  'kegg_pathway_new' = c(
+    name = 'Pathway-associated metabolite sets (KEGG) (Oct2019)',
+    path = 'database/metaboanalyst/20200223/original/kegg_pathway_new.rda',
+    file = 'kegg_pathway_new.rda',
+    desc_en = 'This library contains 84 metabolite sets based on human metabolic pathways.',
+    desc_cn = '这个数据库包含84个基于人类代谢通路的代谢物集合'
+  ),
+  'kegg_pathway_old' = c(
+    name = 'Pathway-associated metabolite sets (KEGG) (Previous)',
+    path = 'database/metaboanalyst/201909/pathway.rda',
+    file = 'pathway.rda',
+    desc_en = 'This library contains 80 metabolite sets based on human metabolic pathways.',
+    desc_cn = '这个数据库包含80个基于人类代谢通路的代谢物集合'
+  ),
+  'predicted' = c(
+    name = 'Predicted metabolite sets',
+    path = 'database/metaboanalyst/20200223/original/predicted.rda',
+    file = 'predicted.rda',
+    desc_en = 'This library contains 912 metabolic sets that are predicted to be changed in the case of dysfunctional enzymes using genome-scale network model of human metabolism.',
+    desc_cn = '这个数据库包含912个用人类代谢的全基因组网络模型预测得到的酶失常情况下会产生变化的代谢物集合'
+  )
+)
+## Pathway-associated metabolite sets (SMPDB)
+## Pathway-associated metabolite sets (KEGG) (Previous)
+
+metpa.library <- list(
+  'Homo sapiens (KEGG)' = c(
+    name = 'Homo sapiens (KEGG)',
+    code = 'hsa',
+    path = 'database/metaboanalyst/20200223/original/hsa.rda',
+    file = 'hsa.rda',
+    desc_cn = '这个数据库包含84个代谢通路'
+  ),
+  'Mus musculus (KEGG)' = c(
+    name = 'Mus musculus (KEGG)',
+    code = 'mmu',
+    path = 'database/metaboanalyst/20200223/original/mmu.rda',
+    file = 'mmu.rda',
+    desc_cn = '这个数据库包含84个代谢通路'
+  ))
+
+metpa.library[['Bos taurus (cow) (KEGG)']] <- c(
+  name = 'Bos taurus (cow) (KEGG)',
+  code = 'bta',
+  path = 'database/metaboanalyst/20200223/original/bta.rda',
+  file = 'bta.rda',
+  desc_cn = '这个数据库包含84个代谢通路'
+)
+
+metpa.library[['Escherichia coli K-12 MG1655']] <- c(
+  name = 'Escherichia coli K-12 MG1655',
+  code = 'eco',
+  path = 'database/metaboanalyst/20200223/original/eco.rda',
+  file = 'eco.rda',
+  desc_cn = '这个数据库包含86个代谢通路'
+)
+
+## HMDB database
+## "HMDB ID"       "name"          "direct_parent" "class"
+hmdb_db <- list(
+  file = 'database/HMDB/20190514/hmdb_metabolites.csv'
+)
+```
+
+```{r input setting metaboanalyst}
+## analysis
+analyses <- c('MSEA', 'MetPA')[c(1, 2)]
+
+## MSEA
+msea.lib.type <- c('smpdb_pathway', 'kegg_pathway_new', 'kegg_pathway_old',
+                   'predicted')[1]
+## MetPA
+## species code
+metpa.lib.type <- c('Homo sapiens (KEGG)' = 'hsa',
+                    'Mus musculus (KEGG)' = 'mmu',
+                    'Bos taurus (cow) (KEGG)' = 'bta',
+                    'Drosophila melanogaster (fruit fly) (KEGG)' = 'dme',
+                    'Escherichia coli K-12 MG1655' = 'eco')[1]
+
+## test type
+test <- c('Dunn', 'Games-Howell', 'T', 'Mann-Whitney-U')[2]
+test.paired <- FALSE
+# excel workbook with data, sample and var
+# var.csv must have "HMDB ID" column
+file.xlsx <- '/users/leump/Desktop/R/Github/Plot/data/Test/01_Original_data/Pathway_analysis.xlsx'
+worksheet.data <- 'data.csv'
+worksheet.sample <- 'sample.csv'
+worksheet.var <- 'var.csv'
+```
+
+```{r setup directory and files}
+## create output directory
+output.dir <- file.path('output/')
+
+if (!dir.exists(output.dir)) {
+    dir.create(output.dir, recursive = T)
+}
+
+if (file.exists('compound_db.rds'))
+  file.remove('compound_db.rds')
+
+file.copy(file.compound_db, 'compound_db.rds')
+
+if (!file.exists('compound_db.rds')) {
+  Sys.sleep(1)
+}
+Sys.sleep(1)
+## it will download again if date > 30 days
+R.utils::touchFile('compound_db.rds')
+
+
+# syn_nms.rds
+if (file.exists('syn_nms.rds'))
+  file.remove('syn_nms.rds')
+
+file.copy(file.syn_nms, 'syn_nms.rds')
+
+if (!file.exists('syn_nms.rds')) {
+  Sys.sleep(1)
+}
+Sys.sleep(1)
+R.utils::touchFile('syn_nms.rds')
+
+## MSEA
+if ('MSEA' %in% analyses) {
+  if (file.exists(msea.library[[msea.lib.type]]['file']))
+    file.remove(msea.library[[msea.lib.type]]['file'])
+  
+  file.copy(msea.library[[msea.lib.type]]['path'],
+            msea.library[[msea.lib.type]]['file']
+  )
+  
+  ## it will download again if date > 30 days
+  ## touch after copy is complete
+  while(!file.exists(msea.library[[msea.lib.type]]['file'])) {
+    Sys.sleep(1)
+  }
+  Sys.sleep(1)
+  R.utils::touchFile(msea.library[[msea.lib.type]][['file']])
+}
+
+
+## MetPA
+if ('MetPA' %in% analyses) {
+  if (!is.null(metpa.library[[names(metpa.lib.type)]])) {
+    if (file.exists(metpa.library[[names(metpa.lib.type)]]['file']))
+      file.remove(metpa.library[[names(metpa.lib.type)]]['file'])
+    
+    file.copy(metpa.library[[names(metpa.lib.type)]]['path'],
+      metpa.library[[names(metpa.lib.type)]]['file']
+    )
+    
+    ## it will download again if date > 30 days
+    ## touch after copy is complete
+    if (!file.exists(metpa.library[[names(metpa.lib.type)]]['file'])) {
+      Sys.sleep(1)
+    }
+    Sys.sleep(1)
+    R.utils::touchFile(metpa.library[[names(metpa.lib.type)]]['file'])
+  }
+}
+
+```
+
+```{r introduction message, include=T, results='asis'}
+sprintf('通路分析采用了%d种方法：',
+        length(analyses)) %>% cat
+
+paste0(
+    plyr::laply(seq_along(analyses), function(i) {
+      switch(analyses[i],
+             MSEA = paste0(i, '.代谢物集合富集分析 （Metabolite Set Enrichment Analysis）'),
+             MetPA = paste0(i, '.代谢通路分析 （Metabolic Pathway Analysis）')
+      )
+    }) %>% 
+      paste0(collapse = '，'),
+    '。\n\n'
+  ) %>% cat
+
+
+if ('MSEA' %in% analyses) {
+  
+  cat("
+**代谢物集合富集分析** - Metabolite Set Enrichment Analysis (MSEA)[@Xia2010]。代谢物集合是预先定义的一类有共同点的代谢物，比如（1）参与同一个代谢通路（SMPDB[@Jewison2014]，KEGG），（2）在某种生理条件下会有显著变化，（3）和某种基因相关，（4）在同一个器官、组织或者细胞区室，或者其它的一些条件。对于一组有显著变化的代谢物，MSEA分析可以找出这组代谢物比较集中的代谢物集合，也就是富集的代谢物集合。用的检验方法是Over-representation analysis (ORA)，可以选择hypergeometric test或 Fisher’s exact test。检验的逻辑是，如果显著差异的代谢物是随机均匀分布在所有的代谢物集合中，对于某一个代谢物集合来讲，其包含的显著差异代谢物的个数和这个集合的大小成正比。比如所有的代谢物集合共有100个不同的代谢物，代谢物集合A有20个代谢物，那么预期20%%的显著差异代谢物会属于A。如果实际的个数大于这个预期值并且P<0.05，就可以说显著差异代谢物在这个代谢物集合中富集。这些富集的代谢物集合所在的通路就可以重点研究。\n\n")
+  
+  sprintf("此次代谢物集合富集分析的数据库是\"%s\"，%s。只考虑其中包含有2个或以上显著差异代谢物的集合，并且参考代谢组（refrerence metabolome）为提供的数据中所有鉴定出来的代谢物。参考代谢组指的是代谢组分析平台所能检测到的所有代谢物，会对富集分析的显著性产生影响。简单来说，不是代谢物集合数据库中所有的代谢物都能被分析平台检测到，所以只考虑数据库中能够被检测到的这部分代谢物。 在metaboanalyst.ca在线平台上默认是用的数据库中所有的代谢物。Over-representation analysis (ORA)检验的方法选择的是hypergeometric test。\n\n", 
+msea.library[[msea.lib.type]]['name'], 
+msea.library[[msea.lib.type]]['desc_cn']) %>% cat
+ 
+  sprintf("输入的代谢物仅为%s检验中P<0.05的代谢物，并且去掉了没有匹配的HMDB ID代谢物。P值和倍数变化（Fold Change）数据来自hypothesis_test.csv。\n\n", 
+        test[1]) %>% cat 
+  
+  
+  cat("图：Metabolite Set Enrichment Analysis分析得到的代谢物集合富集倍数（Fold Enrichment）和P值。只包含富集倍数大于1的代谢物集合，并且从上往下显著性依次递减。\n\n")
+}
+
+if ('MetPA' %in% analyses) {
+  
+  cat("**代谢通路分析** - Metabolic Pathway Analysis (MetPA)[@Xia2011]包含两个重要组成部分：over-representation analysis (ORA) 和通路拓扑分析（pathway topological analysis）。Over-representation analysis (ORA) 检测是否一组代谢物（Metabolite set）包括比随机预期更多的有显著差异的代谢物。ORA 检验可以选择hypergeometric test或 Fisher’s exact test。检验的逻辑是，如果显著差异的代谢物是随机均匀分布在所有的代谢物集合中，对于某一个代谢物集合来讲，其包含的显著差异代谢物的个数和这个集合的大小成正比。比如所有的代谢物集合共有100个不同的代谢物，代谢物集合A有20个代谢物，那么预期20%%的显著差异代谢物会属于A。如果实际的个数大于这个预期值并且P<0.05，就可以说显著差异代谢物在这个代谢物集合中富集。需要注意的是ORA分析只是把代谢通路包含的代谢物当做一个集合，并检验显著的代谢物在集合中是否有富集，但是没有考虑代谢通路的网络结构和出于网络结构中不同位置的代谢物在通路中的重要性的差别。通路拓扑分析则利用了广泛使用的网络分析中的节点中心性指标：中介中心性（betweenness centrality）和 度中心性（degree centrality），来衡量代谢物对于代谢通路的重要性。通路影响因子（pathway impact）是所有通路中有显著差异的代谢物的重要性评分的和。通路分析的通路数据库主要是基于KEGG。\n\n")
+  
+  ## names(metpa.lib.type)[1] 前面加上空格以后报错
+  ## 错误: 句法分析器2行里不能有多字节字符
+  sprintf("参考代谢组（refrerence metabolome）是提供的数据中所有鉴定出来的代谢物。参考代谢组指的是代谢组分析平台所能检测到的所有代谢物，会对富集分析的显著性产生影响。简单来说，不是代谢物集合数据库中所有的代谢物都能被分析平台检测到，所以只考虑数据库中能够被检测到的这部分代谢物。 在metaboanalyst.ca在线平台上默认是用的数据库中所有的代谢物。通路数据库采用的是%s通路数据库，物种代码%s。 %s。此次通路分析的两个部分的方法选择的是，hypergeometric test (ORA)和relative betweenness centrality（通路拓扑分析）。\n\n",names(metpa.lib.type)[1],
+metpa.library[[names(metpa.lib.type)[1]]]['code'],
+metpa.library[[names(metpa.lib.type)[1]]]['desc_cn']) %>% cat
+
+  
+  sprintf("输入的代谢物仅为%s检验中P<0.05的代谢物，并且去掉了没有匹配的KEGG ID代谢物。上调和下调的代谢物是根据倍数变化（Fold Change）来判定。P值和倍数变化（Fold Change）数据来自hypothesis_test.csv中。\n\n", test)
+  
+  cat("图：MetPA分析的通路影响因子和-log10（P）。标记了原始P<0.05的通路名称。\n\n")
+}
+```
+
+```{r read input files_metaboanalyst}
+library(kableExtra)
+d.data <- read.data(file.xlsx, sheet = worksheet.data, type = 'data')
+d.sample <- read.data(file.xlsx, sheet = worksheet.sample, type = 'sample')
+d.var <- read.data(file.xlsx, sheet = worksheet.var, type = 'var') 
+  
+## HMDB ID version 4
+d.var <- (d.var %>% dplyr::mutate(
+  `Metabolite Name` = rownames(d.var),
+  HMDB_v4 = stringr::str_replace(`HMDB ID`, 'HMDB', 'HMDB00')
+))[, c('Metabolite Name', 'Class', 'HMDB ID', 'HMDB_v4')]
+
+## load HMDB database
+hmdb <- read.csv(hmdb_db$file, check.names = F, row.names = 1)
+colnames(hmdb) <- c('HMDB_v4', 'HMDB_name', 'HMDB_direct_parent', 'HMDB_class')
+
+d.var <- dplyr::left_join(d.var, hmdb, by = 'HMDB_v4')
+
+## retrieve KEGG ID
+tmp <- capture.output(
+  id <- idMap(d.var[, 'HMDB ID'])
+)
+
+testthat::expect(
+  !any(duplicated(id[!(id[, 'HMDB'] %in% c('', 'NA')), 'HMDB'])),
+  failure_message = 'Duplicated HMDB ID'
+)
+
+d.var <- dplyr::left_join(d.var, data.frame(id), by = c('HMDB ID' = 'Query'))
+# d.var <- dplyr::left_join(d.var, data.frame(id), by = c('HMDB_v4' = 'HMDB'))
+
+d.var <- lapply(d.var, function(x) {
+    ifelse(is.na(x), '', x)
+}) %>% data.frame(check.names = F)
+# d.var <- d.var  %>% dplyr::mutate(
+#     KEGG = ifelse(
+#         is.na(KEGG),
+#         '', KEGG
+#     ),
+#     `HMDB ID` = ifelse(
+#         is.na(`HMDB ID`),
+#         '', `HMDB ID`
+#     ),
+#     Match = ifelse(
+#         is.na(Match),
+#         '', Match
+#     )
+# )
+
+## var.csv might have extra rows
+d.var <- d.var %>% dplyr::filter(
+  `Metabolite Name` %in% colnames(d.data)
+)
+
+testthat::expect_equal(
+  d.var[, 'Metabolite Name'],
+  colnames(d.data)
+)
+
+testthat::expect_equal(
+  rownames(d.sample),
+  rownames(d.data)
+)
+
+if (test.paired == T) {
+  ht.res <- hypothesisTest(d.data, d.sample$Group, pair = d.sample$Pair)
+} else {
+  if (nlevels(d.sample$Group) > 2) {
+    if (test == 'T') {
+      test2 <- 'Pairwise T'
+    } else if (test == 'Mann-Whitney-U') {
+      test2 <- 'Pairwise Mann-Whitney-U'
+    } else {
+      test2 <- test
+    }
+  } else {
+    test2 <- test
+  }
+  ht.res <- hypothesisTest2(d.data, d.sample$Group, test = c(test2, 'Fold change'))
+}
+
+testthat::expect_equal(
+    rownames(ht.res),
+    d.var[, 'Metabolite Name']
+)
+  
+```
+
+```{r, results='asis', include=T, fig.width=8, fig.height=6}
+if (!file.exists(file.path(output.dir, 'metabolite_list.csv'))) {
+  write.csv(data.frame(d.var[, c('Metabolite Name', 'Class', 'HMDB ID', 'Match', 'KEGG')], ht.res, check.names = F),
+            file.path(output.dir, 'metabolite_list.csv'),
+            row.names = F)
+}
+
+test.name <- test
+# if (nlevels(d.sample$Group) == 2) {
+#   if (test == 'T') test.name <- 'parametric pvalue'
+#   if (test == 'Mann-Whitney-U') test.name <- 'non-parametric pvalue'
+# }
+
+
+p <- metabolomicsPathwayAnalysis(
+  ht.res, 
+  d.var, test = test.name, 
+  analyses = analyses, 
+  output.dir = output.dir,
+  msea.lib.type = msea.lib.type,
+  metpa.lib.type = metpa.lib.type, 
+  title.prefix = "##")
+p
+```
+
+## References
+MetaboAnalyst (version: `r packageVersion("MetaboAnalystR")`) FAQ: https://www.metaboanalyst.ca/MetaboAnalyst/faces/docs/Faqs.xhtml#ora
+
+Small Molecule Pathway Database (SMPDB): https://smpdb.ca
+
+Kyoto Encyclopedia of Genes and Genomes (KEGG): https://www.kegg.jp/
+
+Human Metabolome Database (HMDB): https://hmdb.ca/

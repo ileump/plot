@@ -1,0 +1,834 @@
+---
+title: "Forest"
+author: "leump"
+date: "9/5/2021"
+output: html_document
+---
+
+```{r, include=F, echo=F, message=F, warnings=F}
+options(java.parameters = '-Xmx8000m')
+source('Rscript/setup.R')
+source('Rscript/functions.R')
+source('Rscript/app_functions.R')
+source('rscript/pathway_funs.R', encoding = 'UTF-8')
+
+options(useFancyQuotes = FALSE)
+
+
+knitr::opts_chunk$set(
+  cache = T,
+  message = F,
+  dpi = 300
+)
+
+library(plyr)
+library(ggplot2)
+library(magrittr)
+library(kableExtra)
+library(limma)
+library(WGCNA)
+library(multiGSEA)
+library(metaboliteIDmapping)
+library(reactome.db)
+
+# library(extrafont)
+# loadfonts(device = 'win', quiet = T)
+# par(family = 'Liberation')
+# windowsFonts(
+#   serif = 'Liberation Serif',
+#   sans = 'Liberation Sans',
+#   mono = 'Liberation Mono'
+# )
+
+par(family = 'sans')
+
+set.seed(1)
+
+prefix <- '120'
+output.dir <- file.path('output', prefix)
+Sys.setlocale("LC_ALL","Chinese")
+
+if (!dir.exists(output.dir)) {
+    dir.create(output.dir, recursive = T)
+}
+```
+
+
+```{r, limma}
+d10 <- read.csv('/Users/leump/Desktop/2020-014-A-01/output/data/GRACE/data.csv',
+                row.names = 1, check.names = F)
+
+d10[d10 == 0] <- 0.5 * min(d10[d10 > 0])
+
+d10.log2 <- log2(d10)
+
+s10 <- read.csv('/Users/leump/Desktop/2020-014-A-01/output/data/traits.csv',
+                check.names = F, row.names = 1)
+
+d.var <- read.csv('/Users/leump/Desktop/2020-014-A-01/output/data/GRACE/var.csv',
+                check.names = F, row.names = 1)
+
+# s10 <- new_d.traits
+
+##------------------
+## single factor
+##------------------
+age <- s10$AGE
+bmi <- s10$BMI
+sex <- s10$SEX
+## GRACE + AGE + SEX + BMI
+Group <- paste('GRACE', s10$GRACE, sep = '_')
+
+design.single <- model.matrix(~0 + Group + age + sex + bmi)
+colnames(design.single) %<>% stringi::stri_replace_all_fixed('Group', '')
+
+
+fit.single <- limma::lmFit(
+  t(d10.log2), 
+  design.single
+  # block = d10$subject,
+  # correlation = corfit$consensus.correlation
+)
+
+fit2.single <- makeContrasts(
+  'GRACE_High - GRACE_Low',
+  levels = design.single
+) %>%
+  contrasts.fit(fit.single, contrasts = .) %>%
+  eBayes
+
+
+
+##------------------
+## 
+##------------------
+if (F) {
+  data.frame(
+    `single factor` = colnames(design.single)) %>%
+    kable(format = 'markdown')
+  
+  rownames(design.single) <- rownames(d10)
+  
+  write.csv(design.single, 'output/110/design_single.csv')
+}
+
+plyr::l_ply(c('single'), function(x) {
+  fit2 <- get(paste0('fit2.', x))
+  
+  dir.name <- file.path(output.dir, x)
+  if (!dir.exists(dir.name)) {
+    dir.create(dir.name)
+  }
+  
+  plyr::l_ply(seq_along(colnames(fit2$contrasts)), function(i) {
+    file.name <- file.path(
+      dir.name, 
+      paste0(colnames(fit2$contrasts)[i], '.csv') %>%
+        stringi::stri_replace_all_fixed('/', ' div ')
+    )
+    print(file.name)
+    topTable(fit2, coef = i, number = Inf, adjust.method = 'BH') %>%
+      write.csv(file = file.name, row.names = T)
+  })
+})
+
+
+```
+
+```{r, forest 1 model}
+res <- topTable(fit2.single, coef = i, number = Inf, adjust.method = 'BH', confint = T)
+d1 <- res %>%
+  tibble::rownames_to_column('term') %>%
+  dplyr::filter(
+    `adj.P.Val` < 0.05 &
+      `adj.P.Val` < 0.05 &
+      `logFC` > 0
+  )%>%
+  dplyr::mutate(
+    col = ifelse(logFC < 0.05, 'green', 'red')
+  )
+
+
+p1 <- ggplot(d1, aes(seq_along(term), 1)) + 
+  geom_rect(aes(xmin = seq_along(term) - 0.5, xmax = seq_along(term) + 
+                  0.5, ymin = 0, ymax = Inf, 
+                fill = ordered(seq_along(term)%%2 + 1))) +
+  scale_fill_manual(values = c("#FFFFFF13", "#00000013"), guide = "none") +
+  geom_text(aes(label = term), hjust = 0, size = 3.6) +
+  coord_flip(ylim = c(0, nrow(d1))) +
+  scale_x_continuous(expand = expansion(mult = c(0.01, 0))) +
+  scale_y_continuous(expand = c(0, 0)) + 
+  labs(x = '', y = '') +
+  theme_classic() +
+  theme(
+    plot.margin = unit(c(0, 0, 5.5, 5.5), "pt"),
+    panel.grid = element_blank(),
+    panel.border = element_blank(),
+    panel.spacing = unit(c(0, 0, 0, 0), "null"),
+    axis.ticks.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.title.y = element_blank(),
+    axis.line.y = element_blank(),
+    axis.text.x = element_text(color = 'white', size = 12),
+    axis.ticks.x = element_line(color = c(0, 0, 0, 0)),
+    legend.position = "none",
+    axis.ticks.length = unit(0, "null"),
+    legend.margin = margin(unit(0, "null"))
+  )
+
+p2 <- ggplot(d1, aes(seq_along(term), logFC)) + 
+  geom_rect(aes(xmin = seq_along(term) - 0.5, xmax = seq_along(term) + 
+                  0.5, ymin = rangeplot1[1], ymax = rangeplot1[4], 
+                fill = ordered(seq_along(term)%%2 + 1))) +
+  scale_fill_manual(values = c("#FFFFFF13", "#00000013"), guide = "none") +
+  geom_point(pch = 15, size = 1.8, aes(color = col)) +
+  scale_color_manual(values = c('red' = 'red', 'grey15' = 'grey15', 'green' = 'green')) +
+  geom_errorbar(aes(ymin = CI.L, ymax = CI.R), width = 0.15) +
+  geom_hline(yintercept = 0, linetype = 1) +
+  geom_text(aes(seq_along(term), rangeplot1[3], 
+                label = format(P.Value, digits = 3, scientific = T)),
+            hjust = 0) +
+  coord_flip(ylim = rangeplot1[c(1,4)]) +
+  scale_x_continuous(expand = expansion(mult = c(0.01, 0))) +
+  scale_y_continuous(expand = c(0.01, 0),
+                     breaks = (function(n = 5, ...) {
+                       n_default <- n
+                       function(x, n = n_default) {
+                         x <- x[is.finite(x)]
+                         if (length(x) == 0) {
+                           return(numeric())
+                         }
+                         rng <- range(x)
+                         rng[2] <- (rng[2] + rng[1] * 0.5)*2/3
+                         labeling::extended(rng[1], rng[2], n, ...)
+                       }
+                     })()) + 
+  labs(x = '', y = '') +
+  theme_classic() +
+  theme(
+    plot.margin = unit(c(0, 0, 5.5, 0), "pt"),
+    panel.grid = element_blank(),
+    panel.border = element_blank(),
+    panel.spacing = unit(c(0, 0, 0, 0), "null"),
+    axis.ticks.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_text(size = 12),
+    axis.title.y = element_blank(),
+    axis.line.y = element_blank(),
+    legend.position = "none",
+    axis.ticks.length = unit(0, "null"),
+    legend.margin = margin(unit(0, "null"))
+  )
+
+forest_plot <- function(p1, p2) {
+  grid.newpage()
+  
+  pushViewport(
+    viewport(x = 0, y = 0, height = 0.9, width = 1/4, just = c('left', 'bottom'))
+  )
+  
+  grid.draw(ggplotGrob(p1))
+  
+  popViewport()
+  
+  pushViewport(
+    viewport(x = 1/4, y = 0, height = 0.9, width = 3/4, just = c('left', 'bottom'))
+  )
+  
+  grid.draw(ggplotGrob(p2))
+  
+  # popViewport()
+  # 
+  # pushViewport(
+  #   viewport(x = 5/8, y = 0, height = 0.9, width = 3/8, just = c('left', 'bottom'))
+  # )
+  # 
+  # grid.draw(ggplotGrob(p3))
+  
+  popViewport()
+
+  pushViewport(
+    viewport(x = 0, y = 0.9, height = 0.04, width = 1, just = c('left', 'bottom'))
+  )
+  
+  grid.lines(
+    x = unit(c(0.01, 0.99), 'npc'),
+    y = unit(c(0.1, 0.1), 'cm'),
+    gp = gpar(lwd = 1.5)
+  )
+  
+  grid.text(
+    x = c(
+      unit(1/8, 'npc'),
+      unit(3/8, 'npc'),
+      unit(0.83, 'npc')
+    ),
+    y = unit(0.5, 'npc'),
+    label = c('Metalobome', 'logFC', 'P-value'),
+    gp = gpar(family = 'sans')
+  )
+  
+  grid.lines(
+    x = unit(c(1/4 + 0.02, 0.98), 'npc'),
+    y = unit(c(0.9, 0.9), 'npc'),
+    gp = gpar(lwd = 1.2)
+  )
+  
+  # grid.lines(
+  #   x = unit(c(5/8 + 0.02, 0.98), 'npc'),
+  #   y = unit(c(0.9, 0.9), 'npc'),
+  #   gp = gpar(lwd = 1.2)
+  # )
+  
+  popViewport()
+  
+  pushViewport(
+    viewport(x = 0, y = 0.94, height = 0.04, width = 1, just = c('left', 'bottom'))
+  )
+  
+  grid.lines(
+    x = unit(c(0.01, 0.99), 'npc'),
+    y = unit(c(0.9, 0.9), 'npc'),
+    gp = gpar(lwd = 1.5)
+  )
+  
+  grid.text(
+    x = c(
+      unit(10/16-0.02, 'npc')
+    ),
+    y = unit(0.4, 'npc'),
+    label = c('DM - non-DM'),
+    gp = gpar(family = 'sans')
+  )
+}
+
+file.pdf <- file.path(output.dir, 'Limma_forest_plot.pdf')
+Cairo::CairoPDF(file.pdf, onefile = T, width = 9, height = 9)
+forest_plot(p1, p2)
+dev.off()
+
+file.tiff <- file.path(output.dir, 'Limma_forest_plot.tiff')
+tiff(file.tiff, width = 9, height = 9, units = 'in',
+     res = 300, compress = 'lzw')
+forest_plot(p1, p2)
+dev.off()
+```
+
+```{r, forest 2 model}
+res <- lapply(seq_along(colnames(fit2.single$contrasts)), function(i) {
+  topTable(fit2.single, coef = i, number = Inf, adjust.method = 'BH'
+           , confint = T)
+})
+
+a1 <- res[[1]][selected, ]
+a2 <- res[[2]][selected, ]
+
+d1 <- a1 %>%
+  tibble::rownames_to_column('term') %>%
+  dplyr::mutate(
+    col = ifelse(logFC < 0.05, 'green', 'red')
+  )
+
+d2 <- a2 %>%
+  tibble::rownames_to_column('term') %>%
+  dplyr::mutate(
+    col = ifelse(logFC < 0.05, 'green', 'red')
+  )
+
+d1 <- d1[order(d1$P.Value, decreasing = T),]
+selected <- rownames(d1)
+d2 <- d2[selected, ]
+
+
+
+rangeplot1 <- c(min(c(-0.2, d1$CI.L)), max(d1$CI.R), NA, NA)
+rangeplot1[3] <- rangeplot1[2] * 1.1 - rangeplot1[1] * 0.1
+rangeplot1[4] <- rangeplot1[2] * 1.5 - rangeplot1[1] * 0.5
+
+p1 <- ggplot(d1, aes(seq_along(term), 1)) + 
+  geom_rect(aes(xmin = seq_along(term) - 0.5, xmax = seq_along(term) + 
+                  0.5, ymin = 0, ymax = Inf, 
+                fill = ordered(seq_along(term)%%2 + 1))) +
+  scale_fill_manual(values = c("#FFFFFF13", "#00000013"), guide = "none") +
+  geom_text(aes(label = term), hjust = 0, size = 3.6) +
+  coord_flip(ylim = c(0, nrow(d1))) +
+  scale_x_continuous(expand = expansion(mult = c(0.01, 0))) +
+  scale_y_continuous(expand = c(0, 0)) + 
+  labs(x = '', y = '') +
+  theme_classic() +
+  theme(
+    plot.margin = unit(c(0, 0, 5.5, 5.5), "pt"),
+    panel.grid = element_blank(),
+    panel.border = element_blank(),
+    panel.spacing = unit(c(0, 0, 0, 0), "null"),
+    axis.ticks.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.title.y = element_blank(),
+    axis.line.y = element_blank(),
+    axis.text.x = element_text(color = 'white', size = 12),
+    axis.ticks.x = element_line(color = c(0, 0, 0, 0)),
+    legend.position = "none",
+    axis.ticks.length = unit(0, "null"),
+    legend.margin = margin(unit(0, "null"))
+  )
+
+p2 <- ggplot(d1, aes(seq_along(term), logFC)) + 
+  geom_rect(aes(xmin = seq_along(term) - 0.5, xmax = seq_along(term) + 
+                  0.5, ymin = rangeplot1[1], ymax = rangeplot1[4], 
+                fill = ordered(seq_along(term)%%2 + 1))) +
+  scale_fill_manual(values = c("#FFFFFF13", "#00000013"), guide = "none") +
+  geom_point(pch = 15, size = 1.8, aes(color = col)) +
+  scale_color_manual(values = c('red' = 'red', 'grey15' = 'grey15', 'green' = 'green')) +
+  geom_errorbar(aes(ymin = CI.L, ymax = CI.R), width = 0.15) +
+  geom_hline(yintercept = 0, linetype = 1) +
+  geom_text(aes(seq_along(term), rangeplot1[3], 
+                label = format(P.Value, digits = 3, scientific = T)),
+            hjust = 0) +
+  coord_flip(ylim = rangeplot1[c(1,4)]) +
+  scale_x_continuous(expand = expansion(mult = c(0.01, 0))) +
+  scale_y_continuous(expand = c(0.01, 0),
+                     breaks = (function(n = 5, ...) {
+                       n_default <- n
+                       function(x, n = n_default) {
+                         x <- x[is.finite(x)]
+                         if (length(x) == 0) {
+                           return(numeric())
+                         }
+                         rng <- range(x)
+                         rng[2] <- (rng[2] + rng[1] * 0.5)*2/3
+                         labeling::extended(rng[1], rng[2], n, ...)
+                       }
+                     })()) + 
+  labs(x = '', y = '') +
+  theme_classic() +
+  theme(
+    plot.margin = unit(c(0, 0, 5.5, 0), "pt"),
+    panel.grid = element_blank(),
+    panel.border = element_blank(),
+    panel.spacing = unit(c(0, 0, 0, 0), "null"),
+    axis.ticks.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_text(size = 12),
+    axis.title.y = element_blank(),
+    axis.line.y = element_blank(),
+    legend.position = "none",
+    axis.ticks.length = unit(0, "null"),
+    legend.margin = margin(unit(0, "null"))
+  )
+
+rangeplot1 <- c(min(c(-0.2, d2$CI.L)), max(d2$CI.R), NA, NA)
+rangeplot1[3] <- rangeplot1[2] * 1.1 - rangeplot1[1] * 0.1
+rangeplot1[4] <- rangeplot1[2] * 1.5 - rangeplot1[1] * 0.5
+
+p3 <- ggplot(d2, aes(seq_along(term), logFC)) + 
+  geom_rect(aes(xmin = seq_along(term) - 0.5, xmax = seq_along(term) + 
+                  0.5, ymin = rangeplot1[1], ymax = rangeplot1[4], 
+                fill = ordered(seq_along(term)%%2 + 1))) +
+  scale_fill_manual(values = c("#FFFFFF13", "#00000013"), guide = "none") +
+  geom_point(pch = 15, size = 1.8, aes(color = col)) +
+  scale_color_manual(values = c('red' = 'red', 'grey15' = 'grey15', 'green' = 'green')) +
+  geom_errorbar(aes(ymin = CI.L, ymax = CI.R), width = 0.15) +
+  geom_hline(yintercept = 0, linetype = 1) +
+  geom_text(aes(seq_along(term), rangeplot1[3], 
+                label = format(P.Value, digits = 3, scientific = T)),
+            hjust = 0) +
+  coord_flip(ylim = rangeplot1[c(1,4)]) +
+  scale_x_continuous(expand = expansion(mult = c(0.01, 0))) +
+  scale_y_continuous(expand = c(0.01, 0),
+                     breaks = (function(n = 5, ...) {
+                       n_default <- n
+                       function(x, n = n_default) {
+                         x <- x[is.finite(x)]
+                         if (length(x) == 0) {
+                           return(numeric())
+                         }
+                         rng <- range(x)
+                         rng[2] <- (rng[2] + rng[1] * 0.5)*2/3
+                         labeling::extended(rng[1], rng[2], n, ...)
+                       }
+                     })()) + 
+  labs(x = '', y = '') +
+  theme_classic() +
+  theme(
+    plot.margin = unit(c(0, 0, 5.5, 0), "pt"),
+    panel.grid = element_blank(),
+    panel.border = element_blank(),
+    panel.spacing = unit(c(0, 0, 0, 0), "null"),
+    axis.ticks.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.text.x = element_text(size = 12),
+    axis.title.y = element_blank(),
+    axis.line.y = element_blank(),
+    legend.position = "none",
+    axis.ticks.length = unit(0, "null"),
+    legend.margin = margin(unit(0, "null"))
+  )
+
+
+forest_plot <- function(p1, p2, p3) {
+  grid.newpage()
+  
+  pushViewport(
+    viewport(x = 0, y = 0, height = 0.9, width = 1/4, just = c('left', 'bottom'))
+  )
+  
+  grid.draw(ggplotGrob(p1))
+  
+  popViewport()
+  
+  pushViewport(
+    viewport(x = 1/4, y = 0, height = 0.9, width = 3/8, just = c('left', 'bottom'))
+  )
+  
+  grid.draw(ggplotGrob(p2))
+  
+  popViewport()
+  
+  pushViewport(
+    viewport(x = 5/8, y = 0, height = 0.9, width = 3/8, just = c('left', 'bottom'))
+  )
+  
+  grid.draw(ggplotGrob(p3))
+  
+  popViewport()
+  
+  pushViewport(
+    viewport(x = 0, y = 0.9, height = 0.04, width = 1, just = c('left', 'bottom'))
+  )
+  
+  grid.lines(
+    x = unit(c(0.01, 0.99), 'npc'),
+    y = unit(c(0.1, 0.1), 'cm'),
+    gp = gpar(lwd = 1.5)
+  )
+  
+  grid.text(
+    x = c(
+      unit(1/8, 'npc'),
+      unit(3/8, 'npc'),
+      unit(9/16, 'npc'),
+      unit(3/4, 'npc'),
+      unit(15/16, 'npc')
+    ),
+    y = unit(0.5, 'npc'),
+    label = c('Metalobome', 'logFC', 'P-value', 'logFC', 'P-value'),
+    gp = gpar(family = 'sans')
+  )
+  
+  grid.lines(
+    x = unit(c(1/4 + 0.02, 5/8 - 0.02), 'npc'),
+    y = unit(c(0.9, 0.9), 'npc'),
+    gp = gpar(lwd = 1.2)
+  )
+  
+  grid.lines(
+    x = unit(c(5/8 + 0.02, 0.98), 'npc'),
+    y = unit(c(0.9, 0.9), 'npc'),
+    gp = gpar(lwd = 1.2)
+  )
+  
+  popViewport()
+  
+  pushViewport(
+    viewport(x = 0, y = 0.94, height = 0.04, width = 1, just = c('left', 'bottom'))
+  )
+  
+  grid.lines(
+    x = unit(c(0.01, 0.99), 'npc'),
+    y = unit(c(0.9, 0.9), 'npc'),
+    gp = gpar(lwd = 1.5)
+  )
+  
+  grid.text(
+    x = c(
+      unit(7/16, 'npc'),
+      unit(13/16, 'npc')
+    ),
+    y = unit(0.4, 'npc'),
+    label = c('High_GRACE DM vs Non-DM', 'Low_GRACE DM vs Non-DM'),
+    gp = gpar(family = 'sans')
+  )
+}
+
+file.pdf <- file.path(output.dir, 'Limma_forest_plot.pdf')
+Cairo::CairoPDF(file.pdf, onefile = T, width = 12, height = 9)
+forest_plot(p1, p2, p3)
+dev.off()
+
+file.tiff <- file.path(output.dir, 'Limma_forest_plot.tiff')
+tiff(file.tiff, width = 12, height = 9, units = 'in',
+     res = 300, compress = 'lzw')
+forest_plot(p1, p2, p3)
+dev.off()
+```
+
+```{r, heatmap}
+d.logFC <- purrr::map(res, 'logFC') %>%
+  do.call(cbind, .)
+
+d.adj.P <- purrr::map(res, 'adj.P.Val') %>%
+  do.call(cbind, .)
+
+rownames(d.logFC) <- rownames(d.adj.P) <- colnames(d10.log2)
+colnames(d.logFC) <- colnames(d.adj.P) <- colnames(fit2.single$contrasts)
+
+library(ComplexHeatmap)
+
+p1 <- Heatmap(
+  d.logFC, 
+  name = 'logFC',
+  cluster_rows = T,
+  cluster_columns = F,
+  col = circlize::colorRamp2(c(-2, 0, 2), c("navyblue", "white", "firebrick"))
+)
+
+
+d.logFC[d.adj.P >= 0.05] <- NA
+d.logFC1 <- na.omit(d.logFC)
+p2 <- Heatmap(
+  d.logFC1, 
+  name = 'logFC',
+  cluster_rows = T,
+  cluster_columns = F,
+  col = circlize::colorRamp2(c(-2, 0, 2), c("navyblue", "white", "firebrick"))
+)
+
+pdf(file = file.path(output.dir, 'heatmap_summary.pdf'),
+    width = 10, height = 40)
+draw(p1, padding =unit(c(60, 10, 10, 60), "mm"))
+dev.off()
+
+pdf(file = file.path(output.dir, 'heatmap_summary_FDRlt0.05.pdf'),
+    width = 10, height = 10)
+draw(p2, padding =unit(c(60, 10, 10, 60), "mm"))
+dev.off()
+```
+
+```{r, gsea}
+selected1 <- d.var[rownames(d.logFC1), ]
+selected <- selected1$`HMDB ID`
+## fgsea
+layers <- c('transcriptome', 'metabolome', 'proteome')[2]
+databases <- c('kegg', 'panther', 'pathbank', 'pharmgkb', 'reactome', 'smpdb', 'wikipathways')[1]
+organism <- c('hsapiens', 'mmusculus')[1]
+pathways <- getMultiOmicsFeatures(
+  dbs = databases, layer = layers, 
+  # returnTranscriptome = 'SYMBOL', 
+  # returnProteome = 'UNIPROT',
+  returnMetabolome = 'HMDB',
+  organism = organism
+)
+
+res.fgsea <- purrr::map(
+  colnames(fit2.single$contrasts) %>% purrr::set_names(), 
+  ~ topTable(fit2.single, coef = ., number = Inf, adjust.method = 'BH')[
+    rownames(d.var), ]
+    # colnames(data.metabolome$log2), ]
+)[
+  c('GRACE_High - GRACE_Low')
+] %>%
+  purrr::imap(function(d.limma, contrast.name) {
+    testthat::expect_equal(
+      rownames(d.limma), 
+      rownames(d.var)
+    )
+    
+    t.stat <- d.limma %>%
+      dplyr::mutate(
+        HMDB = d.var$`HMDB ID`
+      ) %>%
+      tidyr::drop_na(HMDB) %>%
+      dplyr::pull(t, name = HMDB)
+    
+    t.stat <- t.stat[selected]
+    
+    set.seed(1)
+    fgsea::fgseaMultilevel(pathways$metabolome, t.stat, eps = 0) %>%
+      dplyr::mutate(
+        ## leadingEdge is a list
+        leadingEdge = purrr::map_chr(leadingEdge, ~ paste0(., collapse = ','))
+      )
+  })
+# summary csv
+dir.name <- file.path(output.dir, 'fgsea_matabolome')
+if (!dir.exists(dir.name)) {
+  dir.create(dir.name, recursive = T)
+}
+
+purrr::iwalk(res.fgsea, function(x, contrast.name) {
+  file.csv <- file.path(dir.name, paste0('fgsea_', contrast.name, '.csv'))
+  
+  if (!file.exists(file.csv)) {
+    write.csv(x, file.csv)
+  }
+})
+# summary dotplot
+file.pdf <- file.path(dir.name, 'fgsea_KEGG_summary.pdf')
+if (!file.exists(file.pdf)) {
+  # gene
+  cairo_pdf(file.pdf, onefile = T, width = 12, height = 8)
+  # # metabo
+  # cairo_pdf(file.pdf, onefile = T, width = 16, height = 12)
+  purrr::walk(c('pval', 'padj'), function(p) {
+    p_exp <- rlang::parse_expr(p)
+    
+    d1 <- purrr::imap_dfr(res.fgsea, function(x, y) {
+      x %>% 
+        dplyr::select(pathway, !!p_exp, size) %>%
+        dplyr::mutate(
+          contrast = y, 
+          pathway = forcats::fct_reorder2(pathway, !!p_exp, -size)
+        )
+    })
+    
+    p1 <- ggplot(d1, aes(x = pathway, y = -log10(!!p_exp))) +
+      geom_point(aes(size = size, color = !!p_exp < 0.05)) + 
+      scale_color_manual(values = c('gray', 'red')) +
+      geom_hline(yintercept = -log10(0.05)) +
+      labs(x = '') +
+      coord_flip() + 
+      facet_wrap(~ contrast, nrow = 1) +
+      theme_bw()
+    
+    print(p1)
+  })
+  dev.off()
+}
+```
+
+```{r}
+rangeplot1 <- c(min(c(-0.2, d1$CI.L)), max(d1$CI.R), NA, NA)
+rangeplot1[3] <- rangeplot1[2] * 1.1 - rangeplot1[1] * 0.1
+rangeplot1[4] <- rangeplot1[2] * 1.5 - rangeplot1[1] * 0.5
+    
+    
+    
+p1 <- ggplot(d1, aes(seq_along(term), 1)) + 
+      geom_rect(aes(xmin = seq_along(term) - 0.5, xmax = seq_along(term) + 
+                      0.5, ymin = 0, ymax = Inf, 
+                    fill = ordered(seq_along(term)%%2 + 1))) +
+      scale_fill_manual(values = c("#FFFFFF13", "#00000013"), guide = "none") +
+      geom_text(aes(label = term), hjust = 0, size = 3.6) +
+      coord_flip(ylim = c(0, nrow(d1))) +
+      scale_x_continuous(expand = expansion(mult = c(0.01, 0))) +
+      scale_y_continuous(expand = c(0, 0)) + 
+      labs(x = '', y = '') +
+      theme_classic() +
+      theme(
+        plot.margin = unit(c(0, 0, 5.5, 5.5), "pt"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing = unit(c(0, 0, 0, 0), "null"),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.line.y = element_blank(),
+        axis.text.x = element_text(color = 'white', size = 12),
+        axis.ticks.x = element_line(color = c(0, 0, 0, 0)),
+        legend.position = "none",
+        axis.ticks.length = unit(0, "null"),
+        legend.margin = margin(unit(0, "null"))
+      )
+      
+p2 <- ggplot(d1, aes(seq_along(term), logFC)) + 
+      geom_rect(aes(xmin = seq_along(term) - 0.5, xmax = seq_along(term) + 
+                      0.5, ymin = rangeplot1[1], ymax = rangeplot1[4], 
+                    fill = ordered(seq_along(term)%%2 + 1))) +
+      scale_fill_manual(values = c("#FFFFFF13", "#00000013"), guide = "none") +
+      geom_point(pch = 15, size = 1.8, aes(color = col)) +
+      scale_color_manual(values = c('red' = 'red', 'grey15' = 'grey15', 'green' = 'green')) +
+      geom_errorbar(aes(ymin = CI.L, ymax = CI.R), width = 0.15) +
+      geom_hline(yintercept = 0, linetype = 1) +
+      geom_text(aes(seq_along(term), rangeplot1[3], 
+                    label = format(P.Value, digits = 3, scientific = T)),
+                hjust = 0) +
+        
+      ###add ajusted p-value        
+      geom_text(aes(seq_along(term), rangeplot1[3]+0.6,   ####
+                    label = format(adj.P.Val, digits = 3, scientific = T)),
+                hjust = 0)  +   
+                
+      coord_flip(ylim = rangeplot1[c(1,4)]) +
+      scale_x_continuous(expand = expansion(mult = c(0.01, 0))) +
+      scale_y_continuous(expand = c(0.01, 0),
+                         breaks = (function(n = 5, ...) {
+                           n_default <- n
+                           function(x, n = n_default) {
+                             x <- x[is.finite(x)]
+                             if (length(x) == 0) {
+                               return(numeric())
+                             }
+                             rng <- range(x)
+                             rng[2] <- (rng[2] + rng[1] * 0.5)*2/3
+                             labeling::extended(rng[1], rng[2], n, ...)
+                           }
+                         })()) + 
+      labs(x = '', y = '') +
+      theme_classic() +
+      theme(
+        plot.margin = unit(c(0, 0, 5.5, 0), "pt"),
+        panel.grid = element_blank(),
+        panel.border = element_blank(),
+        panel.spacing = unit(c(0, 0, 0, 0), "null"),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_blank(),
+        axis.line.y = element_blank(),
+        legend.position = "none",
+        axis.ticks.length = unit(0, "null"),
+        legend.margin = margin(unit(0, "null"))
+      )  
+
+layer_scales(p2)
+
+
+forest_plot <- function(p1, p2) {
+
+grid.newpage()
+ 
+  pushViewport(
+    viewport(width=0.98,height=0.85,y=unit(3,'mm'),just='bottom',name='zong',layout=grid.layout(ncol=2,widths=c(1,2.2)))
+  )
+  
+
+  
+  pushViewport(viewport(layout.pos.col=1))
+ 
+  grid.draw(ggplotGrob(p1))
+  grid.text(y=unit(1,'npc')+unit(1,'mm'),just='bottom',label='Lipid Species',gp = gpar(family = 'sans'))
+  seekViewport('zong')
+  
+  pushViewport(viewport(layout.pos.col=2))
+  grid.draw(ggplotGrob(p2))
+  pushViewport(dataViewport(xData=c(-0.2,3.32),yData=c(0,1),extension=0))
+  
+  grid.text(label='logFC',y=unit(1,'npc')+unit(1,'mm'),just='bottom',x=unit(1,'native'))
+  grid.text(label='P-Value',y=unit(1,'npc')+unit(1,'mm'),just='bottom',x=unit(rangeplot1[3],'native'),hjust=0) ###ajustification o hjust 
+  grid.text(label='Adjusted P ',y=unit(1,'npc')+unit(1,'mm'),just='bottom',x=unit(rangeplot1[3]+0.6,'native'),hjust=0.1)  ###ajustification o hjust 
+  
+  grid.segments(x=unit(0,'native'),x1=unit(1,'npc')-unit(2,'mm'),y0=unit(1,'npc')+unit(2,'mm')+unit(1,'lines'),y1=unit(1,'npc')+unit(2,'mm')+unit(1,'lines'),gp = gpar(lwd = 1.2))
+  grid.text(y=unit(1,'npc')+unit(3,'mm')+unit(1,'lines'),label='Discovery',just='bottom',gp = gpar(family = 'sans'))
+
+
+  seekViewport('zong')
+  grid.segments(x0=0,x1=1,y0=1,y1=1,gp = gpar(lwd = 1.2))
+  grid.segments(x0=0,x1=1,y0=unit(1,'npc')+unit(4,'mm')+unit(2,'lines'),y1=unit(1,'npc')+unit(4,'mm')+unit(2,'lines'),gp = gpar(lwd = 1.2))
+
+}     
+
+CairoPDF('out.pdf',onefile = T, width = 11, height = 9.5)
+forest_plot(p1,p2)
+dev.off()
+
+```
+
+
+
+
+
+
+
+
+
+

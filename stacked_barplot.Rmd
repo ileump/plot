@@ -1,0 +1,142 @@
+---
+title: "stacked barplot"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source('/Users/leump/Desktop/R/Github/Plot/rscript/app_functions.R')
+source('/Users/leump/Desktop/R/Github/Plot/rscript/app_functions_2.R')
+library(magrittr)
+library(ggplot2)
+library(extrafont)
+
+# library(extrafont)
+# loadfonts(device = 'win', quiet = T)
+# par(family = 'Liberation')
+# windowsFonts(
+#   serif = 'Liberation Serif',
+#   sans = 'Liberation Sans',
+#   mono = 'Liberation Mono'
+# )
+
+par(family = 'sans')
+```
+
+```{r}
+d10 <- read.data(
+    '/Users/leump/Desktop/2021-126-C-01/data.csv'
+)
+
+s10 <- read.csv(
+    '/Users/leump/Desktop/2021-126-C-01/sample.csv',header = T,sep=",",check.names = FALSE
+)
+
+v10 <- data.frame(
+    class = stringr::str_split_fixed(colnames(d10), 'M\\+', 2)[, 1]%>%stringr::str_replace_all("\\(","")%>%stringr::str_replace_all("\\s*$","")%>%stringr::str_replace_all("1$",""),
+    isotope = stringr::str_split_fixed(colnames(d10), 'M\\+', 2)[, 2]%>%stringr::str_replace_all("\\)","")%>%paste0("M+",.)
+)  
+
+rownames(v10) <- colnames(d10)
+
+v10 <- dplyr::mutate(v10, 
+    class = factor(class),
+    isotope_n = stringr::str_split_fixed(isotope, '\\+', 2)[, 2] %>% as.numeric
+    )%>% dplyr::mutate(
+    isotope = factor(isotope, levels = paste0('M+', unique(sort(v10$isotope_n, decreasing = T))))
+)
+
+
+# %>% `rownames<-`(
+#     colnames(d10)
+# ) 
+
+# %>% dplyr::mutate(
+#     class = factor(class),
+#     isotope_n = stringr::str_split_fixed(isotope, '\\+', 2)[, 2] %>% as.numeric
+#     )%>% dplyr::mutate(
+#     isotope = factor(isotope, levels = paste0('M+', unique(sort(v10$isotope_n, decreasing = T))))
+# )
+
+  dd <- sapply(d10, function(x) {
+    structure(plyr::vaggregate(x, s10$Group, mean),
+              names = levels(s10$Group))
+}) %>% as.matrix %>% reshape2::melt() %>%
+    dplyr::mutate(
+        class = v10[Var2, 'class'],
+        isotope = v10[Var2, 'isotope']
+    )
+
+p <- ggplot(dd, aes(x = Var1, y = value, fill = isotope)) +
+    geom_bar(stat = 'identity', position = 'stack') +
+    facet_wrap(~ class, nrow = 1) +
+    labs(x = paste(levels(s10$Group), collapse = ' '), y = 'Percentage isotopic abundance') +
+    theme_minimal() +
+    theme(panel.grid = element_blank(),
+        strip.text.x = element_text(angle = 90, hjust = 0),
+        axis.text.x = element_blank())
+
+pdf('metabolome_summary.pdf', w=10, h=8)
+print(p)
+dev.off()
+
+tiff('metabolome_summary.tiff', w=10, h=8, unit='in', compression = 'lzw+p', res= 300)
+print(p)
+dev.off()
+
+```
+
+```{r}
+# f10 <- '/Users/leump/Desktop/data/1.xlsx'
+# 
+# d10 <- read.data(f10, type = 'data', sheet = 'data.csv')
+# 
+# s10 <- read.data(f10, type = 'sample', sheet = 'sample.csv')
+
+
+
+d.ht <- hypothesisTest2(
+    d10, factor(s10$Group), p.adjust.method = 'none', test = c('Kruskal-Wallis', 'Fold change'),
+) %>% as.data.frame 
+
+
+
+d.ht <- dplyr::mutate(d.ht,
+    name = rownames(d.ht),
+    sig = ifelse(`non-parametric pvalue` < 0.05, '*', ' ')
+)
+
+dd <- sapply(d10, function(x) {
+    structure(plyr::vaggregate(x, factor(s10$Group), mean),
+              names = levels(factor(s10$Group)))
+})
+
+
+
+cairo_pdf(filename = 'heatmap.pdf', onefile = T,
+       width = 4, height = 6)
+
+
+#pdf('/Users/leump/Desktop/Plot/output/heatmap.pdf', w = 6, h = 8)
+
+purrr::walk(unique(v10$class), function(class.i) {
+    var.ind <- which(v10$class == class.i)
+    
+    d.ind <- dd[, var.ind, drop = F] %>% t
+    rownames(d.ind) <- paste(
+        na.omit(d.ht[var.ind, 'sig']),
+        stringr::str_extract(rownames(d.ind), 'M\\+[0-9]+')
+    )
+    
+    pheatmap::pheatmap(d.ind, cellwidth = 40, cellheight = 20, fontsize = 10,
+                       scale = 'none', main = class.i, angle_col = 45,
+                       display_numbers = T,
+                       number_format = "%.2e",
+                       legend = F,
+                       cluster_rows = FALSE, cluster_cols = FALSE) %>%
+        print
+})
+
+dev.off()
+```
+

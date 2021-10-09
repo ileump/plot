@@ -1,0 +1,887 @@
+---
+title: "代谢通路分析"
+bibliography: local.bib
+link-citations: yes
+output:
+  html_document: 
+    toc: yes
+    toc_float:
+      toc_collapsed: yes
+    toc_depth: 6
+    number_sections: yes
+    keep_md: yes
+    mode: selfcontained
+    css: ~/Desktop/R/Github/Metabolome_workflow/css/style-1.css
+    fig_width: 13
+    fig_height: 7
+  word_document: default
+biblio-style: apalike
+---
+
+```{r, include=F, echo=F, message=F, warnings=F}
+source('rscript/setup.R')
+source('rscript/functions.R')
+source('rscript/app_functions.R')
+source('rscript/pathway_funs.R', encoding = 'UTF-8')
+source('rscript/app_functions_2.R')
+
+options(useFancyQuotes = FALSE)
+options(java.parameters = '-Xmx8000m')
+
+knitr::opts_chunk$set(
+  cache = T,
+  message = F,
+  dpi = 300
+)
+
+## English locale
+## 通路数据库采用的是KEGG<U+4EBA><U+7C7B>通路数据库
+Sys.setlocale(locale = "Chinese")
+
+
+# library(plyr)
+library(ggplot2)
+library(magrittr)
+library(MetaboAnalystR)
+library(kableExtra)
+library(dplyr)
+
+# library(extrafont)
+# loadfonts(device = 'win', quiet = T)
+# par(family = 'Liberation')
+# windowsFonts(
+#   serif = 'Liberation Serif',
+#   sans = 'Liberation Sans',
+#   mono = 'Liberation Mono'
+# )
+
+par(family = 'sans')
+## set document font family in _output.yml
+```
+
+```{r fix metaboanalyst db, eval=F}
+library(stringi)
+
+## compound_db.rds stri_encode(my.lib$name, '', 'UTF-8')
+## syns.db.rds Encoding <- 'UTF-8'
+
+## use English instead of Chinese
+## Encoding of non-ascii characters is latin1 if LC_ALL is English,
+## or unknow if it is Chinese
+# Sys.setlocale('LC_ALL', 'English')
+## iconvlist
+sessionInfo()
+
+l10n_info()
+
+details <- function(x) {
+    details <-
+        list(x=x,encoding=Encoding(x),bytes=nchar(x,"b"),chars=nchar(x,"c"),
+             width=nchar(x,"w"),raw=paste(charToRaw(x),collapse=":"))
+    print(t(as.matrix(details)))
+}
+
+## -----------------------------------
+## compound_db.rds
+##------------------------------------
+# compound_db.rds downloaded
+my.lib <- readRDS('database/metaboanalyst/20200223/original/compound_db.rds')
+# Warning message:
+# In readRDS("database/metaboanalyst/20200223/original/compound_db.rds") :
+#   strings not representable in native encoding will be translated to UTF-8
+#
+# Actually the strings are not translated to UTF-8
+#
+# We will get the above warning if the original file is used.
+
+plyr::llply(my.lib, function(x) {all(stri_enc_isutf8(x), na.rm = T)})
+## name is FALSE
+
+## check if each name is utf8 encoded
+name.isutf8 <- stri_enc_isutf8(my.lib$name)
+my.lib$name[which(!name.isutf8)]
+# stri_enc_detect(my.lib$name[which(!name.isutf8)])
+
+# write.csv(my.lib[which(!name.isutf8), ], 'database/metaboanalyst/20200223/compound_db_original.csv')
+
+# con <- file('database/metaboanalyst/20200223/compound_db_original.csv',
+#             open = "w+", encoding = "native.enc")
+# 
+# writeLines(my.lib$name, con = con, useBytes = TRUE)
+# close(con)
+
+pryr::bits(my.lib$name[which(!name.isutf8)[1]])
+
+name2 <- enc2utf8(my.lib$name)
+testthat::expect_equivalent(
+  pryr::bits(name2), pryr::bits(my.lib$name)
+) # 60/19024 mismatches
+
+
+name3 <- my.lib$name
+Encoding(name2) <- 'UTF-8'
+
+testthat::expect_equivalent(
+  pryr::bits(name2), pryr::bits(name3)
+) # 60/19024 mismatches
+
+testthat::expect_equivalent(
+  pryr::bits(name3), pryr::bits(my.lib$name)
+) ## pass
+
+my.lib$name <- stri_encode(my.lib$name, '', 'UTF-8')
+testthat::expect_equivalent(
+  pryr::bits(name2), pryr::bits(my.lib$name)
+) ## pass
+
+
+## conclusion::
+## enc2utf8 is equivalent to stri_encode
+## Encoding does not change bits
+
+# pryr::bits(cmpd.name.utf8[1])
+# write.csv(my.lib[which(!name.isutf8), ], 'database/metaboanalyst/20200223/compound_db_utf8.csv')
+readr::write_excel_csv(my.lib, 'database/metaboanalyst/20200223/metaboanalyst database/compound_db_UTF-8-BOM.csv')
+# con <- file('database/metaboanalyst/20200223/metaboanalyst database/compound_db_utf8.csv',
+#             open = "w+", encoding = "native.enc")
+# 
+# writeLines(paste0(colnames(my.lib), collapse =','), con = con, useBytes = TRUE)
+# for(i in 1:nrow(my.lib)) {
+#   writeLines(paste0(my.lib[i, ], collapse = ','), con = con, useBytes = TRUE)
+# }
+# 
+# close(con)
+
+
+pryr::bits(my.lib$name[which(!name.isutf8)[1]])
+
+saveRDS(my.lib, file = 'database/metaboanalyst/20200223/compound_db_utf8.rds')
+
+my.lib.utf8 <- readRDS('database/metaboanalyst/20200223/compound_db_utf8.rds')
+
+my.lib.utf8$name[which(!name.isutf8)]
+all(stri_enc_isutf8(my.lib$name))
+
+if (!file.exists('database/metaboanalyst/20200223/metaboanalyst database/compound_db.xlsx')) {
+  XLConnect::writeWorksheetToFile(my.lib, 
+            file = 'database/metaboanalyst/20200223/metaboanalyst database/compound_db.xlsx',
+            sheet = 'my.lib'
+            )
+}
+
+## -----------------------------------
+## syn_nms.rds
+##------------------------------------
+syns.db <- readRDS('database/metaboanalyst/20200223/original/syn_nms.rds')
+## "syns.vec"  "syns.list"
+## 19024
+
+name.isutf8 <- stri_enc_isutf8(syns.db$syns.vec)
+
+Encoding(syns.db$syns.vec) <- 'UTF-8'
+
+syns.db$syns.list <- purrr::map(syns.db$syns.list, function(x) {
+  Encoding(x) <- 'UTF-8'
+  x
+})
+
+
+saveRDS(syns.db, 'database/metaboanalyst/20200223/syn_nms_utf8.rds')
+
+syns.db.utf8 <- readRDS('database/metaboanalyst/20200223/syn_nms_utf8.rds')
+
+  
+if (!file.exists('database/metaboanalyst/20200223/metaboanalyst database/syn_nms.txt')) {
+  fout <- file('database/metaboanalyst/20200223/metaboanalyst database/syn_nms.txt', 'w', encoding = 'native.enc')
+  purrr::walk(seq_along(syns.db$syns.list), function(i) {
+    writeLines('#----------------------------------------', fout, useBytes = T)
+    writeLines(paste('# ', i), fout, useBytes = T)
+    writeLines('#----------------------------------------', fout, useBytes = T)
+    writeLines(paste0(syns.db$syns.list[[i]], collapse = '\n'), fout, useBytes = T)
+    writeLines('\n', fout, useBytes = T)
+  })
+  close(fout)
+}
+
+## -----------------------------------
+## smpdb_pathway.rda
+## current.msetlib
+## "id"        "name"      "member"    "reference" "image"
+##------------------------------------
+## 99 msets, 495 metabolites
+load('database/metaboanalyst/20200223/original/smpdb_pathway.rda')
+
+smpdb.msetlib <- current.msetlib
+
+## member is false
+plyr::llply(smpdb.msetlib, function(x) {all(stri_enc_isutf8(x), na.rm = T)})
+
+name.isutf8 <- stri_enc_isutf8(smpdb.msetlib$member)
+smpdb.msetlib$member[which(!name.isutf8)]
+
+smpdb.msetlib$member <- stri_encode(smpdb.msetlib$member, '', 'UTF-8')
+
+if (!file.exists('database/metaboanalyst/20200223/metaboanalyst database/smpdb_pathway.xlsx')) {
+  
+  XLConnect::writeWorksheetToFile(smpdb.msetlib, 
+            file = 'database/metaboanalyst/20200223/metaboanalyst database/smpdb_pathway.xlsx',
+            sheet = 'current.msetlib'
+            )
+  
+  my.lib[purrr::map(smpdb.msetlib$member, function(x) {
+    stringr::str_split(x, '; +')
+  }) %>% unlist %>% unique %>% sort(decreasing = F) %>%
+    match(my.lib$name), ] %>% 
+    XLConnect::writeWorksheetToFile(
+    file = 'database/metaboanalyst/20200223/metaboanalyst database/smpdb_pathway.xlsx',
+    sheet = 'compound'
+  )
+}
+## some metabolites do not match
+
+## -----------------------------------
+## kegg_pathway_new.rda
+##------------------------------------
+## 84 msets, 336 metabolites
+load('database/metaboanalyst/20200223/original/kegg_pathway.rda')
+
+kegg.msetlib <- current.msetlib
+
+## all true
+plyr::llply(kegg.msetlib, function(x) {all(stri_enc_isutf8(x), na.rm = T)})
+
+name.isutf8 <- stri_enc_isutf8(kegg.msetlib$member)
+kegg.msetlib$member[which(!name.isutf8)]
+
+kegg.msetlib$member <- stri_encode(kegg.msetlib$member, '', 'UTF-8')
+
+if (!file.exists('database/metaboanalyst/20200223/metaboanalyst database/kegg_pathway.xlsx')) {
+  
+  XLConnect::writeWorksheetToFile(kegg.msetlib, 
+            file = 'database/metaboanalyst/20200223/metaboanalyst database/kegg_pathway.xlsx',
+            sheet = 'current.msetlib'
+            )
+  
+  ## length 2286
+  cmpd.vec <- purrr::map(kegg.msetlib$member, function(x) {
+    stringr::str_split(x, '; +')
+  }) %>% unlist %>% unique %>% sort(decreasing = F)
+ 
+  data.frame(name = cmpd.vec) %>% dplyr::left_join(my.lib, by = 'name') %>% 
+    XLConnect::writeWorksheetToFile(
+    file = 'database/metaboanalyst/20200223/metaboanalyst database/kegg_pathway.xlsx',
+    sheet = 'compound'
+  )
+}
+
+## -----------------------------------
+## location.rda
+##------------------------------------
+load('database/metaboanalyst/20200223/original/location.rda')
+
+location.msetlib <- current.msetlib
+
+
+plyr::llply(location.msetlib, function(x) {all(stri_enc_isutf8(x), na.rm = T)})
+## name is FALSE
+
+# ## check if each name is utf8 encoded
+# name.isutf8 <- stri_enc_isutf8(my.lib$name)
+# my.lib$name[which(!name.isutf8)]
+
+if (!file.exists('database/metaboanalyst/20200223/metaboanalyst database/location.xlsx')) {
+  
+  XLConnect::writeWorksheetToFile(location.msetlib, 
+            file = 'database/metaboanalyst/20200223/metaboanalyst database/location.xlsx',
+            sheet = 'location'
+            )
+  
+  ## length 2286
+  cmpd.vec <- purrr::map(location.msetlib$member, function(x) {
+    stringr::str_split(x, '; +')
+  }) %>% unlist %>% unique %>% sort(decreasing = F)
+ 
+  data.frame(name = cmpd.vec) %>% dplyr::left_join(my.lib, by = 'name') %>% 
+    XLConnect::writeWorksheetToFile(
+    file = 'database/metaboanalyst/20200223/metaboanalyst database/location.xlsx',
+    sheet = 'compound'
+  )
+}
+
+## -----------------------------------
+## predicted.rda
+##------------------------------------
+load('database/metaboanalyst/20200223/original/predicted.rda')
+
+predicted.msetlib <- current.msetlib
+
+
+plyr::llply(predicted.msetlib, function(x) {all(stri_enc_isutf8(x), na.rm = T)})
+## name is FALSE
+
+## check if each name is utf8 encoded
+# name.isutf8 <- stri_enc_isutf8(my.lib$name)
+# my.lib$name[which(!name.isutf8)]
+
+if (!file.exists('database/metaboanalyst/20200223/metaboanalyst database/predicted.xlsx')) {
+  
+  XLConnect::writeWorksheetToFile(predicted.msetlib, 
+            file = 'database/metaboanalyst/20200223/metaboanalyst database/predicted.xlsx',
+            sheet = 'predicted'
+            )
+  
+  ## length 2286
+  cmpd.vec <- purrr::map(predicted.msetlib$member, function(x) {
+    stringr::str_split(x, '; +')
+  }) %>% unlist %>% unique %>% sort(decreasing = F)
+ 
+  data.frame(name = cmpd.vec) %>% dplyr::left_join(my.lib, by = 'name') %>% 
+    XLConnect::writeWorksheetToFile(
+    file = 'database/metaboanalyst/20200223/metaboanalyst database/predicted.xlsx',
+    sheet = 'compound'
+  )
+}
+
+## -----------------------------------
+## hsa.rda
+##------------------------------------
+load('database/metaboanalyst/20200223/original/hsa.rda')
+
+## length 1550
+cmpd.vec <- metpa$mset.list %>% unlist %>% unique
+
+if (!file.exists('database/metaboanalyst/20200223/metaboanalyst database/hsa.xlsx')) {
+  lapply(
+  seq_along(metpa$mset.list), function(i) {
+    data.frame(
+      pathway = names(metpa$mset.list)[i],
+      name = names(metpa$mset.list[[i]]),
+      kegg_id = metpa$mset.list[[i]]
+    )}) %>% do.call(rbind, .) %>% 
+  `rownames<-`(NULL) %>%
+    XLConnect::writeWorksheetToFile(
+    file = 'database/metaboanalyst/20200223/metaboanalyst database/hsa.xlsx',
+    sheet = 'hsa'
+  )
+  
+  data.frame(kegg_id = cmpd.vec) %>% dplyr::left_join(my.lib, by = 'kegg_id') %>%
+    XLConnect::writeWorksheetToFile(
+    file = 'database/metaboanalyst/20200223/metaboanalyst database/hsa.xlsx',
+    sheet = 'compound'
+  )
+}
+
+## -----------------------------------
+## export all the databases
+##------------------------------------
+list.rda <- list.files('database/metaboanalyst/MetaboAnalyst-4.93/resources/libs/kegg', '*.rda', full.names = T)
+
+rm(metpa)
+
+res <- lapply(list.rda, function(file.rda) {
+  print(file.rda)
+  load(file.rda)
+  cmpd.vec <- metpa$mset.list %>% unlist %>% unique
+  file.xlsx <- file.path('database/metaboanalyst/MetaboAnalyst-4.93/rda2xls',
+                         stringr::str_replace(fs::path_file(file.rda), 'rda', 'xlsx'))
+  
+  species_code <- fs::path_ext_remove(fs::path_file(file.rda))
+  
+  ## write to xlsx
+  if (!file.exists(file.xlsx)) {
+    lapply(
+      seq_along(metpa$mset.list), function(i) {
+        data.frame(
+          pathway = names(metpa$mset.list)[i],
+          name = names(metpa$mset.list[[i]]),
+          kegg_id = metpa$mset.list[[i]] %>% unname
+        )}) %>% do.call(rbind, .) %>% 
+      `rownames<-`(NULL) %>%
+      XLConnect::writeWorksheetToFile(
+        file = file.xlsx,
+        sheet = file.rda %>% fs::path_file() %>% fs::path_ext_remove()
+      )
+    
+    data.frame(kegg_id = cmpd.vec) %>% 
+      dplyr::left_join(my.lib, by = 'kegg_id') %>%
+      XLConnect::writeWorksheetToFile(
+        file = file.xlsx,
+        sheet = 'compound'
+      )
+  }
+  
+  # testthat::expect_equal(
+  #   names(metpa$mset.list), unname(metpa$path.ids), 
+  # )
+  # 
+  ## summary
+  mset.count <- sapply(metpa$mset.list, function(mset.i) {
+    length(mset.i)
+  })
+  
+  res <- tibble::tibble(
+    pathway_id = names(metpa$mset.list) %>% stringr::str_sub(4, -1),
+    pathway_name = names(metpa$path.ids)[match(names(metpa$mset.list), metpa$path.ids)],
+    !!species_code := mset.count
+  )
+  
+  res
+}) %>% purrr::reduce(dplyr::full_join, by = c('pathway_id', 'pathway_name'))
+
+write.csv(res, file = file.path('database/metaboanalyst/MetaboAnalyst-4.93/rda2xls', 'summary.csv'))
+```
+
+```{r database setting}
+# MetaboAnalystR version
+file.compound_db <- 'database/metaboanalyst/20200223/compound_db_utf8.rds'
+
+# if (file.exists('compound_db.rds'))
+#   file.remove('compound_db.rds')
+# if (file.copy(file.compound_db, 'compound_db.rds')) {
+#   ## it will download again if date > 30 days
+#   R.utils::touchFile('compound_db.rds')
+# }
+
+# syn_nms.rds
+file.syn_nms <- 'database/metaboanalyst/20200223/syn_nms_utf8.rds'
+# if (file.exists('syn_nms.rds'))
+#   file.remove('syn_nms.rds')
+# if (file.copy(file.syn_nms, 'syn_nms.rds')) {
+#   R.utils::touchFile('syn_nms.rds')
+# }
+
+## metabolite set library
+msea.library <- list(
+  'smpdb_pathway' = c(
+    name = 'Pathway-associated metabolite sets (SMPDB) (Oct2019)',
+    path = 'database/metaboanalyst/20200223/original/smpdb_pathway.rda',
+    file = 'smpdb_pathway.rda',
+    desc_en = 'This library contains 99 metabolite sets based on normal human metabolic pathways.',
+    desc_cn = '这个数据库包含99个基于正常人类代谢通路的代谢物集合，也适用于一般哺乳动物'
+  ),
+  'kegg_pathway_new' = c(
+    name = 'Pathway-associated metabolite sets (KEGG) (Oct2019)',
+    path = 'database/metaboanalyst/20200223/original/kegg_pathway_new.rda',
+    file = 'kegg_pathway_new.rda',
+    desc_en = 'This library contains 84 metabolite sets based on human metabolic pathways.',
+    desc_cn = '这个数据库包含84个基于人类代谢通路的代谢物集合'
+  ),
+  'kegg_pathway_old' = c(
+    name = 'Pathway-associated metabolite sets (KEGG) (Previous)',
+    path = 'database/metaboanalyst/201909/pathway.rda',
+    file = 'pathway.rda',
+    desc_en = 'This library contains 80 metabolite sets based on human metabolic pathways.',
+    desc_cn = '这个数据库包含80个基于人类代谢通路的代谢物集合'
+  ),
+  'predicted' = c(
+    name = 'Predicted metabolite sets',
+    path = 'database/metaboanalyst/20200223/original/predicted.rda',
+    file = 'predicted.rda',
+    desc_en = 'This library contains 912 metabolic sets that are predicted to be changed in the case of dysfunctional enzymes using genome-scale network model of human metabolism.',
+    desc_cn = '这个数据库包含912个用人类代谢的全基因组网络模型预测得到的酶失常情况下会产生变化的代谢物集合'
+  )
+)
+## Pathway-associated metabolite sets (SMPDB)
+## Pathway-associated metabolite sets (KEGG) (Previous)
+
+metpa.library <- list(
+  'Homo sapiens (KEGG)' = c(
+    name = 'Homo sapiens (KEGG)',
+    code = 'hsa',
+    path = 'database/metaboanalyst/20200223/original/hsa.rda',
+    file = 'hsa.rda',
+    desc_cn = '这个数据库包含84个代谢通路'
+  ),
+  'Mus musculus (KEGG)' = c(
+    name = 'Mus musculus (KEGG)',
+    code = 'mmu',
+    path = 'database/metaboanalyst/20200223/original/mmu.rda',
+    file = 'mmu.rda',
+    desc_cn = '这个数据库包含84个代谢通路'
+  ))
+
+metpa.library[['Bos taurus (cow) (KEGG)']] <- c(
+  name = 'Bos taurus (cow) (KEGG)',
+  code = 'bta',
+  path = 'database/metaboanalyst/20200223/original/bta.rda',
+  file = 'bta.rda',
+  desc_cn = '这个数据库包含84个代谢通路'
+)
+
+metpa.library[['Escherichia coli K-12 MG1655']] <- c(
+  name = 'Escherichia coli K-12 MG1655',
+  code = 'eco',
+  path = 'database/metaboanalyst/20200223/original/eco.rda',
+  file = 'eco.rda',
+  desc_cn = '这个数据库包含86个代谢通路'
+)
+
+# Pathway-associated metabolite sets (SMPDB)
+# 	This library contains 99 metabolite sets based on normal human metabolic pathways.
+# 	Pathway-associated metabolite sets (KEGG) (Oct2019)
+# 	This library contains 84 metabolite sets based on human metabolic pathways. The current KEGG pathway data was obtained (in Oct. 2019) using the KEGG REST service. The metabolic reactions are more species specific compared to the old version.
+# 	Pathway-associated metabolite sets (KEGG) (Previous)
+# 	This library contains 80 metabolite sets based on human metabolic pathways. The previous version is still provided for reproducibility and will be phased out in the coming year.
+
+## HMDB database
+## "HMDB ID"       "name"          "direct_parent" "class"
+hmdb_db <- list(
+  file = 'database/HMDB/20190514/hmdb_metabolites.csv'
+)
+```
+
+```{r input setting}
+## Output directory
+dir.name <- '130'
+# output.dir <- file.path('output', dir.name)
+
+## analysis
+analyses <- c('MSEA', 'MetPA')[c(1, 2)]
+
+###################################
+## MSEA
+###################################
+msea.lib.type <- c('smpdb_pathway', 'kegg_pathway_new', 'kegg_pathway_old',
+                   'predicted')[1]
+
+# Pathway-associated metabolite sets (SMPDB)
+# 	This library contains 99 metabolite sets based on normal human metabolic pathways.
+# Pathway-associated metabolite sets (KEGG) (Oct2019)
+# 	This library contains 84 metabolite sets based on human metabolic pathways. The current KEGG pathway data was obtained (in Oct. 2019) using the KEGG REST service. The metabolic reactions are more species specific compared to the old version.
+# Pathway-associated metabolite sets (KEGG) (Previous)
+# 	This library contains 80 metabolite sets based on human metabolic pathways. The previous version is still provided for reproducibility and will be phased out in the coming year.
+# 	Disease-associated metabolite sets (Blood)
+# 	This library contains 344 metabolite sets reported in human blood.
+# 	Disease-associated metabolite sets (Urine)
+# 	This library contains 384 metabolite sets reported in human urine.
+# 	Disease-associated metabolite sets (CSF)
+# 	This library contains 166 metabolite sets reported in human cerebral spinal fluid (CSF).
+# 	SNP-associated metabolite sets
+# 	This library contains 4,598 metabolite sets based on their associations with detected single nucleotide polymorphisms (SNPs) loci.
+# 	Predicted metabolite sets
+# 	This library contains 912 metabolic sets that are predicted to be changed in the case of dysfunctional enzymes using genome-scale network model of human metabolism.
+# 	Location-based metabolite sets
+# 	This library contains 73 metabolite sets based on organ, tissue, and subcellular localizations.
+# 	Drug-pathway-associated metabolite sets
+# 	This library contains 461 metabolite sets based on drug pathways.
+# 	Self-defined metabolite sets
+# 	Click here to upload your own customized metabolite set library
+	
+	
+###################################
+## MetPA
+###################################
+## species code
+metpa.lib.type <- c('Homo sapiens (KEGG)' = 'hsa',
+                    'Mus musculus (KEGG)' = 'mmu',
+                    'Bos taurus (cow) (KEGG)' = 'bta',
+                    'Drosophila melanogaster (fruit fly) (KEGG)' = 'dme',
+                    'Escherichia coli K-12 MG1655' = 'eco')[1]
+# Homo sapiens (KEGG): hsa
+# Homo sapiens (SMPDB): hsa
+# Mus musculus (KEGG): mmu
+# Mus musculus (SMPDB): mmu
+# Rattus norvegicus (rat) (KEGG): rno
+# Bos taurus (cow) (KEGG): bta
+# Danio rerio (zebrafish) (KEGG): dre
+# Drosophila melanogaster (fruit fly) (KEGG): dme
+# Caenorhabditis elegans (nematode) (KEGG): cel
+# Saccharomyces cerevisiae (yeast) (KEGG): sce
+
+###################################
+## use only one of the following
+## 1. file.ht when you have hypothesis test results
+## 2. file.xlsx when you have data in excel
+## 3. csv file 
+###################################
+
+# use existing hypothesis test results
+file.ht <- ''
+file.var.ht <- '/users/leump/Desktop/Metabolome_workflow/data_test/01_Original_data/var.csv'
+
+# excel workbook with data, sample and var
+# var.csv must have "HMDB ID" column
+file.xlsx <- '/users/leump/Desktop/R/Github/Metabolome_workflow/data_test/01_Original_data/Pathway_analysis.xlsx'
+worksheet.data <- 'data.csv'
+worksheet.sample <- 'sample.csv'
+worksheet.var <- 'var.csv'
+
+# perform hypothesis test using original data
+file.data <- ''
+file.sample <- ''
+file.var <- ''
+
+## test type
+test <- c('Dunn', 'Games-Howell', 'T', 'Mann-Whitney-U')[2]
+test.paired <- FALSE
+## if test.paired is TRUE, Pair column must be present in sample.csv
+```
+
+```{r setup directory and files}
+## create output directory
+output.dir <- file.path('output', dir.name)
+
+if (!dir.exists(output.dir)) {
+    dir.create(output.dir, recursive = T)
+}
+
+if (file.exists('compound_db.rds'))
+  file.remove('compound_db.rds')
+
+file.copy(file.compound_db, 'compound_db.rds')
+
+if (!file.exists('compound_db.rds')) {
+  Sys.sleep(1)
+}
+Sys.sleep(1)
+## it will download again if date > 30 days
+R.utils::touchFile('compound_db.rds')
+
+
+# syn_nms.rds
+if (file.exists('syn_nms.rds'))
+  file.remove('syn_nms.rds')
+
+file.copy(file.syn_nms, 'syn_nms.rds')
+
+if (!file.exists('syn_nms.rds')) {
+  Sys.sleep(1)
+}
+Sys.sleep(1)
+R.utils::touchFile('syn_nms.rds')
+
+## MSEA
+if ('MSEA' %in% analyses) {
+  if (file.exists(msea.library[[msea.lib.type]]['file']))
+    file.remove(msea.library[[msea.lib.type]]['file'])
+  
+  file.copy(msea.library[[msea.lib.type]]['path'],
+            msea.library[[msea.lib.type]]['file']
+  )
+  
+  ## it will download again if date > 30 days
+  ## touch after copy is complete
+  while(!file.exists(msea.library[[msea.lib.type]]['file'])) {
+    Sys.sleep(1)
+  }
+  Sys.sleep(1)
+  R.utils::touchFile(msea.library[[msea.lib.type]][['file']])
+}
+
+
+## MetPA
+if ('MetPA' %in% analyses) {
+  if (!is.null(metpa.library[[names(metpa.lib.type)]])) {
+    if (file.exists(metpa.library[[names(metpa.lib.type)]]['file']))
+      file.remove(metpa.library[[names(metpa.lib.type)]]['file'])
+    
+    file.copy(metpa.library[[names(metpa.lib.type)]]['path'],
+      metpa.library[[names(metpa.lib.type)]]['file']
+    )
+    
+    ## it will download again if date > 30 days
+    ## touch after copy is complete
+    if (!file.exists(metpa.library[[names(metpa.lib.type)]]['file'])) {
+      Sys.sleep(1)
+    }
+    Sys.sleep(1)
+    R.utils::touchFile(metpa.library[[names(metpa.lib.type)]]['file'])
+  }
+}
+
+```
+
+```{r introduction message, include=T, results='asis'}
+
+sprintf('通路分析采用了%d种方法：',
+        length(analyses)) %>% cat
+
+paste0(
+    plyr::laply(seq_along(analyses), function(i) {
+      switch(analyses[i],
+             MSEA = paste0(i, '.代谢物集合富集分析 （Metabolite Set Enrichment Analysis）'),
+             MetPA = paste0(i, '.代谢通路分析 （Metabolic Pathway Analysis）')
+      )
+    }) %>% 
+      paste0(collapse = '，'),
+    '。\n\n'
+  ) %>% cat
+
+
+if ('MSEA' %in% analyses) {
+  
+  cat("
+**代谢物集合富集分析** - Metabolite Set Enrichment Analysis (MSEA)[@Xia2010]。代谢物集合是预先定义的一类有共同点的代谢物，比如（1）参与同一个代谢通路（SMPDB[@Jewison2014]，KEGG），（2）在某种生理条件下会有显著变化，（3）和某种基因相关，（4）在同一个器官、组织或者细胞区室，或者其它的一些条件。对于一组有显著变化的代谢物，MSEA分析可以找出这组代谢物比较集中的代谢物集合，也就是富集的代谢物集合。用的检验方法是Over-representation analysis (ORA)，可以选择hypergeometric test或 Fisher’s exact test。检验的逻辑是，如果显著差异的代谢物是随机均匀分布在所有的代谢物集合中，对于某一个代谢物集合来讲，其包含的显著差异代谢物的个数和这个集合的大小成正比。比如所有的代谢物集合共有100个不同的代谢物，代谢物集合A有20个代谢物，那么预期20%%的显著差异代谢物会属于A。如果实际的个数大于这个预期值并且P<0.05，就可以说显著差异代谢物在这个代谢物集合中富集。这些富集的代谢物集合所在的通路就可以重点研究。\n\n")
+  
+  sprintf("此次代谢物集合富集分析的数据库是\"%s\"，%s。只考虑其中包含有2个或以上显著差异代谢物的集合，并且参考代谢组（refrerence metabolome）为提供的数据中所有鉴定出来的代谢物。参考代谢组指的是代谢组分析平台所能检测到的所有代谢物，会对富集分析的显著性产生影响。简单来说，不是代谢物集合数据库中所有的代谢物都能被分析平台检测到，所以只考虑数据库中能够被检测到的这部分代谢物。 在metaboanalyst.ca在线平台上默认是用的数据库中所有的代谢物。Over-representation analysis (ORA)检验的方法选择的是hypergeometric test。\n\n", 
+msea.library[[msea.lib.type]]['name'], 
+msea.library[[msea.lib.type]]['desc_cn']) %>% cat
+ 
+  sprintf("输入的代谢物仅为%s检验中P<0.05的代谢物，并且去掉了没有匹配的HMDB ID代谢物。P值和倍数变化（Fold Change）数据来自hypothesis_test.csv。\n\n", 
+        test[1]) %>% cat 
+  
+  
+  cat("图：Metabolite Set Enrichment Analysis分析得到的代谢物集合富集倍数（Fold Enrichment）和P值。只包含富集倍数大于1的代谢物集合，并且从上往下显著性依次递减。\n\n")
+}
+
+if ('MetPA' %in% analyses) {
+  
+  cat("**代谢通路分析** - Metabolic Pathway Analysis (MetPA)[@Xia2011]包含两个重要组成部分：over-representation analysis (ORA) 和通路拓扑分析（pathway topological analysis）。Over-representation analysis (ORA) 检测是否一组代谢物（Metabolite set）包括比随机预期更多的有显著差异的代谢物。ORA 检验可以选择hypergeometric test或 Fisher’s exact test。检验的逻辑是，如果显著差异的代谢物是随机均匀分布在所有的代谢物集合中，对于某一个代谢物集合来讲，其包含的显著差异代谢物的个数和这个集合的大小成正比。比如所有的代谢物集合共有100个不同的代谢物，代谢物集合A有20个代谢物，那么预期20%%的显著差异代谢物会属于A。如果实际的个数大于这个预期值并且P<0.05，就可以说显著差异代谢物在这个代谢物集合中富集。需要注意的是ORA分析只是把代谢通路包含的代谢物当做一个集合，并检验显著的代谢物在集合中是否有富集，但是没有考虑代谢通路的网络结构和出于网络结构中不同位置的代谢物在通路中的重要性的差别。通路拓扑分析则利用了广泛使用的网络分析中的节点中心性指标：中介中心性（betweenness centrality）和 度中心性（degree centrality），来衡量代谢物对于代谢通路的重要性。通路影响因子（pathway impact）是所有通路中有显著差异的代谢物的重要性评分的和。通路分析的通路数据库主要是基于KEGG。\n\n")
+  
+  ## names(metpa.lib.type)[1] 前面加上空格以后报错
+  ## 错误: 句法分析器2行里不能有多字节字符
+  sprintf("参考代谢组（refrerence metabolome）是提供的数据中所有鉴定出来的代谢物。参考代谢组指的是代谢组分析平台所能检测到的所有代谢物，会对富集分析的显著性产生影响。简单来说，不是代谢物集合数据库中所有的代谢物都能被分析平台检测到，所以只考虑数据库中能够被检测到的这部分代谢物。 在metaboanalyst.ca在线平台上默认是用的数据库中所有的代谢物。通路数据库采用的是%s通路数据库，物种代码%s。 %s。此次通路分析的两个部分的方法选择的是，hypergeometric test (ORA)和relative betweenness centrality（通路拓扑分析）。\n\n",names(metpa.lib.type)[1],
+metpa.library[[names(metpa.lib.type)[1]]]['code'],
+metpa.library[[names(metpa.lib.type)[1]]]['desc_cn']) %>% cat
+
+  
+  sprintf("输入的代谢物仅为%s检验中P<0.05的代谢物，并且去掉了没有匹配的KEGG ID代谢物。上调和下调的代谢物是根据倍数变化（Fold Change）来判定。P值和倍数变化（Fold Change）数据来自hypothesis_test.csv中。\n\n", test)
+  
+  cat("图：MetPA分析的通路影响因子和-log10（P）。标记了原始P<0.05的通路名称。\n\n")
+}
+```
+
+```{r read input files}
+## if hypothesis test result is provided, use that
+## else use excel file
+## last use csv files
+
+## sample.csv 
+## Columns: first column is sample ID. Its column name does not matter
+## "Group" and "Order" columns are required.
+## "Pair" column is optional
+
+## var.csv
+## Columns: 'Metabolite Name', 'Class', 'HMDB ID' are required
+if (file.exists(file.ht)) {
+  ht.res <- read.csv(file.ht, check.names = F)
+} else {
+  if (file.exists(file.xlsx)) {
+    
+    d.data <- read.data(file.xlsx, sheet = worksheet.data, type = 'data')
+    d.sample <- read.data(file.xlsx, sheet = worksheet.sample, type = 'sample')
+    d.var <- read.data(file.xlsx, sheet = worksheet.var, type = 'var')
+    
+  } else {
+    
+    d.data <- read.data(file.data, type = 'data')
+    d.sample <- read.data(file.sample, type = 'sample')
+    d.var <- read.data(file.var, type = 'var')
+    
+  }
+  
+  ## HMDB ID version 4
+  d.var <- (d.var %>% dplyr::mutate(
+    `Metabolite Name` = rownames(d.var),
+    HMDB_v4 = stringr::str_replace(`HMDB ID`, 'HMDB', 'HMDB00')
+  ))[, c('Metabolite Name', 'Class', 'HMDB ID', 'HMDB_v4')]
+  
+  ## load HMDB database
+  hmdb <- read.csv(hmdb_db$file, check.names = F, row.names = 1)
+  colnames(hmdb) <- c('HMDB_v4', 'HMDB_name', 'HMDB_direct_parent', 'HMDB_class')
+  
+  d.var <- dplyr::left_join(d.var, hmdb, by = 'HMDB_v4')
+  
+  ## retrieve KEGG ID
+  tmp <- capture.output(
+    id <- idMap(d.var[, 'HMDB ID'])
+  )
+  
+  testthat::expect(
+    !any(duplicated(id[!(id[, 'HMDB'] %in% c('', 'NA')), 'HMDB'])),
+    failure_message = 'Duplicated HMDB ID'
+  )
+  
+  d.var <- dplyr::left_join(d.var, data.frame(id), by = c('HMDB ID' = 'Query'))
+  # d.var <- dplyr::left_join(d.var, data.frame(id), by = c('HMDB_v4' = 'HMDB'))
+  
+  d.var <- lapply(d.var, function(x) {
+      ifelse(is.na(x), '', x)
+  }) %>% data.frame(check.names = F)
+  # d.var <- d.var  %>% dplyr::mutate(
+  #     KEGG = ifelse(
+  #         is.na(KEGG),
+  #         '', KEGG
+  #     ),
+  #     `HMDB ID` = ifelse(
+  #         is.na(`HMDB ID`),
+  #         '', `HMDB ID`
+  #     ),
+  #     Match = ifelse(
+  #         is.na(Match),
+  #         '', Match
+  #     )
+  # )
+  
+  ## var.csv might have extra rows
+  d.var <- d.var %>% dplyr::filter(
+    `Metabolite Name` %in% colnames(d.data)
+  )
+  
+  testthat::expect_equal(
+    d.var[, 'Metabolite Name'],
+    colnames(d.data)
+  )
+  
+  testthat::expect_equal(
+    rownames(d.sample),
+    rownames(d.data)
+  )
+  
+  if (test.paired == T) {
+    ht.res <- hypothesisTest(d.data, d.sample$Group, pair = d.sample$Pair)
+  } else {
+    if (nlevels(d.sample$Group) > 2) {
+      if (test == 'T') {
+        test2 <- 'Pairwise T'
+      } else if (test == 'Mann-Whitney-U') {
+        test2 <- 'Pairwise Mann-Whitney-U'
+      } else {
+        test2 <- test
+      }
+    } else {
+      test2 <- test
+    }
+    ht.res <- hypothesisTest2(d.data, d.sample$Group, test = c(test2, 'Fold change'))
+  }
+  
+  testthat::expect_equal(
+      rownames(ht.res),
+      d.var[, 'Metabolite Name']
+  )
+}
+```
+
+```{r, results='asis', include=T, fig.width=8, fig.height=6}
+if (!file.exists(file.path(output.dir, 'metabolite_list.csv'))) {
+  write.csv(data.frame(d.var[, c('Metabolite Name', 'Class', 'HMDB ID', 'Match', 'KEGG')], ht.res, check.names = F),
+            file.path(output.dir, 'metabolite_list.csv'),
+            row.names = F)
+}
+
+test.name <- test
+# if (nlevels(d.sample$Group) == 2) {
+#   if (test == 'T') test.name <- 'parametric pvalue'
+#   if (test == 'Mann-Whitney-U') test.name <- 'non-parametric pvalue'
+# }
+
+
+metabolomicsPathwayAnalysis(
+  ht.res, 
+  d.var, test = test.name, 
+  analyses = analyses, 
+  output.dir = output.dir,
+  msea.lib.type = msea.lib.type,
+  metpa.lib.type = metpa.lib.type)
+```
+
+
+
+# References
+MetaboAnalyst (version: `r packageVersion("MetaboAnalystR")`) FAQ: https://www.metaboanalyst.ca/MetaboAnalyst/faces/docs/Faqs.xhtml#ora
+
+Small Molecule Pathway Database (SMPDB): https://smpdb.ca
+
+Kyoto Encyclopedia of Genes and Genomes (KEGG): https://www.kegg.jp/
+
+Human Metabolome Database (HMDB): https://hmdb.ca/

@@ -1,0 +1,195 @@
+```{r}
+library(dplyr, quietly = TRUE)
+library(ggplot2)
+d10 <- read.csv( "/Users/leump/Desktop/Plot/heatmap_data/data_oxysterols.csv", header=T, row.names = 1,sep=",",check.names = FALSE)
+s10 <- read.csv( "/Users/leump/Desktop/Plot/heatmap_data/sample_oxysterols.csv", header=T, row.names = 1,sep=",",check.names = FALSE)
+v10 <- read.csv( "/Users/leump/Desktop/Plot/heatmap_data/var_oxysterols.csv", header=T, row.names = 1,sep=",",check.names = FALSE)
+ht <- read.csv("/Users/leump/Desktop/Plot/heatmap_data/hypothesis_test_oxysterols.csv", header=T, row.names = 1, sep=",", check.names = FALSE)
+```
+
+```{r}
+d20 <- d10[]
+group <- factor(s10$Group[1:82],
+                levels =c("S4B",
+                          "S4",
+                          "S3",
+                          "S2",
+                          "S1"))
+
+aov <- sapply(d20, function(x){
+              a <- kruskal.test(x~group)
+              a$p.value
+              })
+
+aov <- t(aov)
+aov_oxysterols <- aov[,stringr::str_detect(colnames(aov), "")]
+aov_oxysterols <- as.data.frame(aov)
+aov_oxysterols <- t(aov_oxysterols)
+colnames(aov_oxysterols) <- "p value"
+
+label_aov <- lapply(rownames(aov_oxysterols),function(x){
+    ifelse(aov_oxysterols[x,]<0.05,paste0(x,"*"),x)
+    })
+
+label_aov <- do.call(rbind, label_aov)
+colnames(label_aov) <- "p value"
+
+```
+
+```{r}
+d30 <- d20[, stringr::str_detect(colnames(d20), "")]
+
+colnames_d30 <- colnames(d30)
+
+d30 <- sapply(d30,function(x){
+              scale(x)
+              })
+
+rownames(d30) <- rownames(d20)
+
+d30 <- t(d30)
+
+d30_mean <- apply(d30,1,function(x){
+  plyr::vaggregate(x,group,mean)
+})%>%t
+colnames(d30_mean) <- levels(group)
+rownames(d30_mean) <- label_aov
+
+ht <- ht[stringr::str_detect(rownames(ht), ""),]
+
+letters <- lapply(rownames(d30),function(i){
+                  p_matrix <- matrix(1,ncol=nlevels(group),nrow=nlevels(group),dimnames = list(levels(group),levels(group)))
+                  p_matrix[lower.tri(p_matrix)] <- ht[i,stringr::str_detect(colnames(ht), "Dunn")]%>%unlist
+                  sig_letters <- multcompView::multcompLetters(p_matrix, threshold = 0.05)$Letters
+                  })
+
+letters_mult <- do.call(rbind, letters)
+
+rownames(letters_mult) <- label_aov
+
+# TAG <- pheatmap::pheatmap(
+#                           d30_mean,
+#                           cluster_rows = FALSE,
+#                           cluster_cols=FALSE,
+#                           color = colorRampPalette(c("navy", "white", "firebrick3"))(50),
+#                           cellwidth=20
+#                           )
+```
+
+```{r}
+d30_mean_m <- d30_mean[nrow(d30_mean):1, ]
+d30_mean_m <- d30_mean_m[,ncol(d30_mean_m):1]
+d30_melt_mean <- reshape2::melt(d30_mean_m)
+
+# d30_melt_mean$Var1 <- stringr::str_pad(d30_melt_mean$Var1,20,"left")
+# d30_melt_mean <- d30_melt_mean[nrow(d30_melt_mean):1,]
+
+letters_m <- letters_mult[nrow(letters_mult):1, ]
+letters_m <- letters_m[, ncol(letters_m):1]
+letters_melt <- reshape2::melt(letters_m)
+
+# letters_melt$Var1 <- stringr::str_pad(letters_melt$Var1,20,"left")
+# letters_melt <- letters_melt[nrow(letters_melt):1,]
+
+
+oxysterols <- ggplot(d30_melt_mean, 
+              aes(x = Var2,y = Var1)
+              ) +
+       geom_tile(aes(fill = value), 
+                 colour="white"
+                 ) +
+       coord_fixed(ratio = 0.2) + # 长宽比
+       scale_fill_gradient2(low = "blue",
+                            mid= "white", 
+                            high = "red", 
+                            breaks = c(-1,-0.8,-0.6,-0.4,-0.2,-0,0.2,0.4,0.6,0.8,1)
+                            ) +
+       geom_text(data = letters_melt,
+                 aes(x = Var2, y = Var1, label = value)
+                 ) +
+       xlab(NULL) +
+       ylab(NULL) +
+       theme(panel.background = element_blank(),
+             panel.border = element_blank(),
+             panel.grid.major = element_blank(),
+             legend.title = element_blank(),
+             axis.ticks.y = element_blank(), 
+             axis.ticks.x = element_blank(),
+             axis.text.x = element_text(size = 15),
+             axis.text.y = element_text(size = 15, hjust = 0),
+             legend.key.height = grid::unit(2, "cm"),
+             legend.position = "right"
+             )
+  
+tiff("oxysterols.tiff", res = 300, width = 5000, height = 5000, compression = "lzw")
+print(oxysterols)
+dev.off()
+
+pdf("oxysterols.pdf", width =20, height = 20)
+print(oxysterols)
+dev.off()
+
+# convert -density 300 plot.pdf -alpha remove  -compress  lzw plot.tiff
+
+```
+
+
+```{r}
+ht <- read.csv("C:/Users/leump/Desktop/Plot/heatmap/hypothesis_test_oxysterols.csv", header=T, row.names = 1, sep=",", check.names = FALSE)
+ht10 <- ht
+ht20 <- ht
+
+ht30 <- ht10[,stringr::str_detect(colnames(ht10), "Dunn")|stringr::str_detect(colnames(ht20), "Fold")]
+
+ht30_P <- ht30[,stringr::str_detect(colnames(ht30), "Dunn")]
+
+ht30_p_adjust <- lapply(ht30_P,function(x){
+  p.adjust(x,method = "fdr")
+})%>%do.call(rbind,.)%>%t()
+rownames(ht30_p_adjust) <- rownames(ht30)
+
+write.csv(ht30, "Dunn test.csv")
+aov <- t(aov)
+write.csv(aov, "Kruskal Wallis test.csv")
+write.csv(ht30_p_adjust, "Dunn test FDR.csv")
+```
+
+
+
+```{r}
+d50 <- scale(d10)
+d50 <- d50[rownames(d10),]%>%as.data.frame()
+group <- factor(s10$Group[1:82],
+                levels =c("S4B",
+                          "S4",
+                          "S3",
+                          "S2",
+                          "S1"))
+
+# scale之后pvalue值
+aov_scale <- sapply(d50,function(x){
+  a<- kruskal.test(x~group)
+  a$p.value
+})%>%as.data.frame()
+colnames(aov_scale) <- c("Kruskal Wallis")
+
+# scale之后Dunn'test的pvalue值
+Dunn_scale <- sapply(d50, function(x){
+  # 计算dunn'test
+  dunn <- FSA::dunnTest(x~group,data = d50)
+  # 提取dunn.names分组比较结果
+  dunn.names <- apply(
+                    combn(levels(group),2), 2, 
+                    function(i) {paste0(rev(i), collapse=':')})
+  # 提取每组dunn'test结果
+  dunn.out <- dunn$res$P.unadj%>%as.array
+  # 添加比较分组名字e.g. dunn:S4:S4B
+  dunnnames = paste0("dunn:", dunn.names)
+  rownames(dunn.out) <- dunnnames
+  dunn.out
+})%>%t()
+
+write.csv(aov_scale,"scale Kruskal Wallis test.csv")
+write.csv(Dunn_scale,"scale Dunn test.csv")
+```
+

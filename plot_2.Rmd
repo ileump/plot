@@ -1,0 +1,898 @@
+## 120-analysis
+
+20201031
+Oxysterol 删除 squalene, Desmosterol, zymosterol
+
+20201002
+Ratio的barplot + error bar + jitter
+Change unit to MFT
+
+```{r setup, include=F, echo=F, message=F, warnings=F}
+source('Rscript/setup.R')
+source('Rscript/functions.R')
+source('Rscript/app_functions.R')
+# source('rscript/pathway_funs.R', encoding = 'UTF-8')
+
+
+options(useFancyQuotes = FALSE)
+options(java.parameters = '-Xmx8000m')
+
+knitr::opts_chunk$set(
+  cache = T,
+  message = F,
+  dpi = 300
+)
+
+library(plyr)
+library(ggplot2)
+library(magrittr)
+# library(MetaboAnalystR)
+library(kableExtra)
+library(dplyr)
+library(patchwork)
+
+# library(extrafont)
+# loadfonts(device = 'win', quiet = T)
+# par(family = 'Liberation')
+# windowsFonts(
+#   serif = 'Liberation Serif',
+#   sans = 'Liberation Sans',
+#   mono = 'Liberation Mono'
+# )
+
+par(family = 'sans')
+font_family <- 'sans'
+
+set.seed(1)
+
+prefix <- 'plot_2'
+output.dir <- file.path('output', prefix)
+# Sys.setlocale("LC_ALL","Chinese")
+
+if (!dir.exists(output.dir)) {
+    dir.create(output.dir, recursive = T)
+}
+```
+
+```{r}
+file10 <- 'data/heatmap_data/20201027 exosome_analytics_MFTC_Bowen.xlsx'
+
+d10 <- local({
+  name.rm <- c('SQUALENE', 'desmosterol', 'zymosterol')
+  XLConnect::readWorksheetFromFile(
+    file10, sheet = 'Numeric',
+    check.names = F, rownames = 1
+  ) %>% dplyr::select(!dplyr::all_of(name.rm))
+  })
+
+
+
+ds10 <- XLConnect::readWorksheetFromFile(
+  file10, sheet = 'Group',
+  check.names = F, rownames = 1
+)
+
+ds10 <- ds10[rownames(d10), ]
+
+dv10 <- XLConnect::readWorksheetFromFile(
+  file10, sheet = 'NumericGroup',
+  check.names = F, rownames = 1
+)
+
+d11 <- d10[ds10$GroupID %in% c('S1', 'S2', 'S3', 'S4'), ]
+
+ds11 <- subset(ds10, GroupID %in% c('S1', 'S2', 'S3', 'S4')) %>%
+  mutate(
+    GroupID = factor(GroupID)
+  )
+
+testthat::expect_equal(
+  rownames(d10),
+  rownames(ds10)
+)
+
+testthat::expect_equal(
+  colnames(d10),
+  rownames(dv10)
+)
+
+attr10 <- getAttrs(colnames(d10))
+
+attr10[256, 'class'] <- 'CS'
+attr10[574:600, 'class'] <- 'Sterol'
+attr10[601:625, 'class'] <- 'Class'
+attr10[626:629, 'class'] <- 'ratio'
+
+attr10 <- attr10 %>%
+  mutate(
+    class2 = forcats::fct_lump_min(class, 2)
+  )
+```
+
+```{r}
+ht.res <- hypothesisTest(d11, ds11$GroupID)
+
+ht.res.fdr <- ht.res %>% 
+  as.data.frame() %>%
+  dplyr::select(
+    dplyr::starts_with(c('parametric', 'TukeyHSD', 'Games', 'non-parametric', 'Dunn'))
+  ) %>%
+  lapply(function(x) {p.adjust(x, method = 'fdr')}) %>%
+  do.call(cbind, .)
+
+ht.res.letters <- sapply(
+  1:nrow(ht.res),
+  function(i) {
+    p_matrix <- matrix(1, nrow = 4, ncol = 4)
+    p_matrix[lower.tri(p_matrix)] <- ht.res[i, startsWith(colnames(ht.res), 'Dunn')]
+    rownames(p_matrix) <- colnames(p_matrix) <- c('S1', 'S2', 'S3', 'S4')
+    multcompView::multcompLetters(p_matrix)$Letters
+  }) %>% t %>%
+  `rownames<-`(rownames(ht.res))
+
+# file.excel <- file.path(
+#   output.dir,
+#   'hypothesis_test.xlsx'
+# )
+# 
+# if(!file.exists(file.excel)) {
+#   XLConnect::writeWorksheetToFile(
+#     file.excel,
+#     data = ht.res,
+#     sheet = 'hypothesis_test',
+#     colnames = rownames(ht.res)
+#   )
+# }
+
+if (F) {
+  XLConnect::writeWorksheetToFile(
+    file.path(output.dir,  'hypothesis_test.xlsx'),
+    ht.res,
+    sheet = 'P',
+    rownames = 'term'
+  )
+  
+  XLConnect::writeWorksheetToFile(
+    file.path(output.dir,  'hypothesis_test.xlsx'),
+    ht.res.fdr %>%
+      `rownames<-`(rownames(ht.res)),
+    sheet = 'FDR',
+    rownames =  'term'
+  )
+}
+
+```
+
+## Heatmap
+
+Kruskal.Wallis and Dunn's test
+
+```{r, eval=F}
+d11a <- lapply(d11, function(x) {
+  vaggregate(scale(x), ds11$GroupID, mean)
+}) %>% do.call(rbind, .) %>%
+  `colnames<-`(c('S1', 'S2', 'S3', 'S4'))
+
+file.pdf <- file.path(output.dir, 'Heatmap_sterol_class.pdf')
+
+
+p_list <- lapply(c('Sterol', 'Class'), function(class.i) {
+  print(class.i)
+  
+  ind <- attr10$class2 == class.i
+  
+  d1 <- d11a[ind, ]
+
+  rownames(d1) <- stringr::str_pad(
+    rownames(d1), max(nchar(rownames(d1))), side = 'left'
+  )
+  rownames(d1) <- paste0(rownames(d1),
+                         ifelse(ht.res[ind, 'non-parametric pvalue'] < 0.05, ' *', '  '))
+  
+  d2 <- ht.res.letters[ind, ] 
+  
+  rownames(d2) <- rownames(d1)
+  d1 <- reshape2::melt(d1)
+  d2 <- reshape2::melt(d2)
+  
+  p <- ggplot(d1, aes(x = Var2, y = reorder(Var1, desc(Var1)))) +
+    geom_tile(aes(fill = value)) +
+    geom_text(data = d2, aes(x = Var2, y = Var1, label = value)) +
+    scale_fill_gradient2(low = 'blue', mid = 'white', high = 'red', midpoint = 0) +
+    scale_x_discrete(expand = expansion(add = c(0.1, 0.6))) +
+    labs(x = '', y = '', title = '') +
+    guides(fill = guide_colorbar(title = NULL, barheight = unit(0.8, 'npc'))) +
+    theme_minimal(base_family = font_family) +
+    theme(panel.grid.major = element_blank(),
+          axis.text.x = element_text(size = 12),
+          plot.title = element_text(hjust = 0.5))
+  
+  p
+})
+
+if (!file.exists(file.pdf)) {
+  cairo_pdf(file.pdf, onefile = T, width = 10, height = 6, family = font_family)
+  
+  p_list[[1]] + p_list[[2]]
+  
+  dev.off()
+}
+
+```
+
+## Volcano plot
+
+```{r, eval=F}
+source('rscript/app_functions.R')
+
+file.pdf <- file.path(output.dir, 'volcano.pdf')
+
+g_combs <- combn(c('S1', 'S2', 'S3', 'S4'), 2)
+
+cairo_pdf(file.pdf, onefile = T, width = 6, height = 5, family = font_family)
+
+plyr::l_ply(1:ncol(g_combs), function(i) {
+  g1 <- g_combs[1, i]
+  g2 <- g_combs[2, i]
+
+  plyr::l_ply(c('Sterol', 'lipid'), function(class.i) {
+    if (class.i == 'Sterol') {
+      ind <- which(attr10$class2 == class.i)
+      
+    } else {
+      ind  <-  which(!(attr10$class2 %in% c('Sterol', 'ratio')))
+    }
+    
+    d1 <- data.frame(
+      p = ht.res[ind, sprintf('Dunn: %s:%s', g2, g1)],
+      fold = ht.res[ind, sprintf('Fold: %s/%s', g2, g1)],
+      label = rownames(ht.res)[ind]
+    )
+    
+    p1 <- plot_volcano(d1, fold_cutoff = 1.2, max_label = 10,
+                 title = paste0(g2, '/', g1)) 
+    
+    print(p1)
+    
+    d1 <- data.frame(
+      p = ht.res.fdr[ind, sprintf('Dunn: %s:%s', g2, g1)],
+      fold = ht.res[ind, sprintf('Fold: %s/%s', g2, g1)],
+      label = rownames(ht.res)[ind]
+    )
+    
+    p2 <- plot_volcano(d1, fold_cutoff = 1.2, max_label = 10,
+                 title = paste0(g2, '/', g1)) +
+      labs(y = '-log10(FDR)') 
+
+    print(p2)
+  })
+})
+
+dev.off()
+```
+
+
+```{r}
+plot_volcano <- function(d, sig_lvl = 0.05, fold_cutoff = 1.5, 
+                         max_label = 10, title = '', 
+                         ggtheme = theme_bw(), font_family = 'Arial',
+                         force = 1, expand = 0.05,
+                         min.segment.length = 0.5) {
+    ## d is data.frame with 3 columns: pvalue, fold, label
+    ## sig_lvl is the significance level
+    ## fold_cutoff is fold cutoff
+    assertthat::assert_that(ncol(d) == 3)
+    
+    colnames(d) <- c('pvalue', 'fold', 'label')
+    
+    d <- d %>% dplyr::mutate(
+        # pvalue and fold change both must pass threshold
+        significant = ifelse(
+            pvalue >= sig_lvl, 'Not significant',
+            ifelse(
+                fold > fold_cutoff, 
+                paste0('P<', sig_lvl, '&FC>', fold_cutoff),
+                ifelse(
+                    fold < 1/fold_cutoff,
+                    paste0('P<', sig_lvl, '&FC<1/', fold_cutoff),
+                    'Not significant'
+                ))),
+        label = ifelse(significant != 'Not significant', label, '')
+    ) %>% dplyr::filter(
+        !is.na(pvalue) & !is.na(fold) & is.finite(fold) & fold > 0
+    )
+    
+    
+    if (max_label > 0) {
+        ## number of significant variables
+        n_sig <- length(which(d$label != ''))
+        if (n_sig > max_label) {
+            ## ids of top max_label smallest P value
+            ## order by P value followed by fold change
+            id_label <- intersect(
+                # order(rank(d[, 'pvalue']) + rank(-abs(log2(d[, 'fold'])))),
+                order(d[, 'pvalue']),
+                which(d$significant != 'Not significant')
+            )[1:max_label]
+            d[-id_label, 'label'] <- ''
+        }
+    } else if(max_label == 0) {
+        d[, 'label'] <- ''
+    }
+    
+    if (fold_cutoff == 1) {
+        ## change significant to P > 0.05 and P < 0.05
+        ## change color_values accordingly
+        d <- d %>% dplyr::mutate(
+            significant = ifelse(
+                significant == 'Not significant',
+                paste0('P\u2265', sig_lvl),
+                paste0('P<', sig_lvl)
+            )
+        )
+        color_values <- c('gray40', 'red') %>%
+            `names<-`(c(paste0('P\u2265', sig_lvl),
+                        paste0('P<', sig_lvl)))
+    } else {
+        color_values <- c('gray40', 'red', 'green') %>%
+            `names<-`(c('Not significant', 
+                        paste0('P<', sig_lvl, '&FC>', fold_cutoff),
+                        paste0('P<', sig_lvl, '&FC<1/', fold_cutoff)))
+    }
+    
+    p <- ggplot(d, aes(x = log2(fold), y = -log10(pvalue))) +
+        geom_point(aes(color = significant), size = 1) +
+        scale_color_manual(values = color_values) +
+        ggrepel::geom_text_repel(aes(label = label), family = font_family,
+                                 size = 2.5,
+                                 force = force, max.iter = 2000) +
+        geom_vline(xintercept = 0, linetype = 'dashed', alpha = 0.5) +
+        geom_hline(yintercept = -log10(sig_lvl), linetype = 'dashed', alpha = 0.5) +
+        scale_x_continuous(
+            limits = c(-max(abs(log2(d$fold))), max(abs(log2(d$fold)))),
+            expand = expansion(mult = c(expand, expand), add = c(0, 0))) +
+        scale_y_continuous(expand = expansion(mult = c(0, expand), add = c(0, 0))) +
+        guides(color = guide_legend(title = 'Significant')) +
+        labs(title = title, x = 'log2(fold change)', y = '-log10(P value)') +
+        ggtheme
+    
+    ## add vertical corresponds to fold change cut-off
+    if (fold_cutoff > 1) {
+        p <- p +
+            geom_vline(xintercept = log2(fold_cutoff), linetype = 'dashed', alpha = 0.5) +
+            geom_vline(xintercept = -log2(fold_cutoff), linetype = 'dashed', alpha = 0.5)
+    }
+    
+    p
+}
+
+file.pdf <- file.path(output.dir, 'volcano_lipids.pdf')
+
+g_combs <- combn(c('S1', 'S2', 'S3', 'S4'), 2)[, c(1, 3)]
+
+cairo_pdf(file.pdf, onefile = T, width = 9, height = 4, family = font_family)
+
+p_list <- lapply(1:ncol(g_combs), function(i) {
+  g1 <- g_combs[1, i]
+  g2 <- g_combs[2, i]
+
+  class.i <- 'lipids'
+  
+  if (class.i == 'Sterol') {
+    ind <- which(attr10$class2 == class.i)
+    
+  } else {
+    ind  <-  which(!(attr10$class2 %in% c('Sterol', 'ratio')))
+  }
+  
+  d1 <- data.frame(
+    p = ht.res[ind, sprintf('Dunn: %s:%s', g2, g1)],
+    fold = ht.res[ind, sprintf('Fold: %s/%s', g2, g1)],
+    label = rownames(ht.res)[ind]
+  )
+  
+  # update_geom_defaults('text', list(font_size = update_geom_defaults1))
+  p1 <- plot_volcano(d1, fold_cutoff = 1.2, max_label = 10, force = 10,
+                     title = paste0(g2, '/', g1)) 
+})
+
+p_list[[1]] + p_list[[2]] +
+  plot_layout(guides = 'collect')
+
+dev.off()
+
+
+
+file.pdf <- file.path(output.dir, 'volcano_sterol.pdf')
+
+g_combs <- combn(c('S1', 'S2', 'S3', 'S4'), 2)[, c(1, 3)]
+
+cairo_pdf(file.pdf, onefile = T, width = 9, height = 4, family = font_family)
+
+p_list <- lapply(1:ncol(g_combs), function(i) {
+  g1 <- g_combs[1, i]
+  g2 <- g_combs[2, i]
+
+  class.i <- 'Sterol'
+  
+  if (class.i == 'Sterol') {
+    ind <- which(attr10$class2 == class.i)
+    
+  } else {
+    ind  <-  which(!(attr10$class2 %in% c('Sterol', 'ratio')))
+  }
+  
+  d1 <- data.frame(
+    p = ht.res[ind, sprintf('Dunn: %s:%s', g2, g1)],
+    fold = ht.res[ind, sprintf('Fold: %s/%s', g2, g1)],
+    label = rownames(ht.res)[ind]
+  )
+  
+  # update_geom_defaults('text', list(font_size = update_geom_defaults1))
+  p1 <- plot_volcano(d1, fold_cutoff = 1.2, max_label = 20, force = 10,
+                     title = paste0(g2, '/', g1)) 
+})
+
+p_list[[1]] + p_list[[2]] +
+  plot_layout(guides = 'collect')
+
+dev.off()
+```
+
+## Heatmap of fold change
+
+P < 0.05
+
+```{r}
+file.pdf <- file.path(output.dir, 'heatmap_fold_change_fdr.pdf')
+
+if (!file.exists(file.pdf)) {
+  cairo_pdf(file.pdf, onefile = T, width = 5, height = 8, family = font_family)
+  
+  d.fold <- ht.res[1:625, startsWith(colnames(ht.res), 'Fold')]
+  d.fdr <- ht.res[1:625, startsWith(colnames(ht.res), 'Dunn')] %>%
+    apply(2, p.adjust, method = 'fdr') < 0.05
+  # rownames(d.fold) <- stringr::str_trunc(rownames(d.fold), 40)
+  
+  d.fold[!d.fdr] <- 1
+  
+  ind <- which(rowSums(d.fdr) > 0)
+  ymin <- min(log2(d.fold[ind, ]))
+  ymax <- max(log2(d.fold[ind, ]))
+  
+  
+  pheatmap::pheatmap(log2(d.fold[ind, ]), 
+                     main = '',
+                     breaks = c(-Inf, 
+                                seq(ymin, -0.0001, length.out = 49),
+                                0,
+                                seq(0.0001, ymax, length.out = 49),
+                                Inf),
+                     color = colorRampPalette(c('navyblue', 'white', 'firebrick'))(100),
+                     cluster_rows = T, cluster_cols = F,
+                     border = 'white',
+                     clustering_method = 'ward.D2',
+                     na_col = 'white')
+  
+  dev.off()
+}
+
+file.pdf <- file.path(output.dir, 'heatmap_fold_change_p.pdf')
+
+if (!file.exists(file.pdf)) {
+  cairo_pdf(file.pdf, onefile = T, width = 5, height = 20, family = font_family)
+  
+  d.fold <- ht.res[1:625, startsWith(colnames(ht.res), 'Fold')]
+  d.fdr <- ht.res[1:625, startsWith(colnames(ht.res), 'Dunn')] < 0.05
+  # rownames(d.fold) <- stringr::str_trunc(rownames(d.fold), 40)
+  
+  d.fold[!d.fdr] <- 1
+  
+  ind <- which(rowSums(d.fdr) > 0)
+  ymin <- min(log2(d.fold[ind, ]))
+  ymax <- max(log2(d.fold[ind, ]))
+  
+  
+  pheatmap::pheatmap(log2(d.fold[ind, ]), 
+                     main = '',
+                     breaks = c(-Inf, 
+                                seq(ymin, -0.0001, length.out = 49),
+                                0,
+                                seq(0.0001, ymax, length.out = 49),
+                                Inf),
+                     color = colorRampPalette(c('navyblue', 'white', 'firebrick'))(100),
+                     cluster_rows = T, cluster_cols = F,
+                     border = 'white',
+                     clustering_method = 'ward.D2',
+                     na_col = 'white', fontsize_row = 4)
+  
+  dev.off()
+}
+
+
+```
+
+## point line
+
+P value
+
+```{r}
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+
+cols <- gg_color_hue(4)
+
+d1 <- data.frame(
+  Group = ds11$GroupID,
+  d11,
+  check.names = F
+)
+
+file.pdf <- file.path(output.dir, 'line_timepoints.pdf')
+
+if (!file.exists(file.pdf)) {
+  cairo_pdf(file.pdf, onefile = T,
+          width = 4, height = 3)
+  
+  plyr::l_ply(
+    2:ncol(d1),
+    function(i) {
+      ## Wuhan
+      p_matrix1 <- matrix(1, nrow = 4, ncol = 4)
+      p_matrix1[lower.tri(p_matrix1)] <- ht.res[i - 1,                                                startsWith(colnames(ht.res), 'Dunn')]
+      colnames(p_matrix1) <- rownames(p_matrix1) <- levels(d1$Group)
+      sig_letters <- multcompView::multcompLetters(p_matrix1, threshold = 0.05)
+      df1 <- data.frame(
+        Group  = names(sig_letters$Letters),
+        sig_letters = sig_letters$Letters)
+      
+      y_max <- max(d1[, i])
+            
+      p <- ggplot(d1, aes(x = Group, y = eval(parse(text = paste0('`', colnames(d1)[i], '`'))))) +
+        geom_jitter(aes(color = Group), alpha = 0.5,
+                    position = position_jitter(width = 0.2)) +
+        scale_color_manual(values = cols) +
+        stat_summary(aes(color = Group),
+                     fun.data = mean_cl_normal, fun.args = list(mult = 1),
+                     geom = 'errorbar', width = 0.5) +
+        stat_summary(aes(color = Group), fun = mean, 
+                     geom = 'point', size = 3,
+                     position = position_dodge(width = 0.5)) +
+        stat_summary(aes(group = 1), fun = mean, 
+                     geom = 'line') +
+        geom_text(aes(x = Group, y = 1.15*y_max, label = sig_letters),
+                  data = df1, color = cols) +
+        labs(x = '', y = 'Abundance (MFTC)') +
+        theme_classic()
+        
+      print(p)
+
+    })
+  
+  dev.off()
+}
+
+```
+
+
+FDR
+
+```{r}
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+
+cols <- gg_color_hue(4)
+
+d1 <- data.frame(
+  Group = ds11$GroupID,
+  d11,
+  check.names = F
+)
+
+file.pdf <- file.path(output.dir, 'line_timepoints_FDR.pdf')
+
+if (!file.exists(file.pdf)) {
+  cairo_pdf(file.pdf, onefile = T,
+          width = 4, height = 3)
+  
+  plyr::l_ply(
+    2:ncol(d1),
+    function(i) {
+      ## Wuhan
+      p_matrix1 <- matrix(1, nrow = 4, ncol = 4)
+      p_matrix1[lower.tri(p_matrix1)] <- ht.res.fdr[i - 1,                                                startsWith(colnames(ht.res.fdr), 'Dunn')]
+      colnames(p_matrix1) <- rownames(p_matrix1) <- levels(d1$Group)
+      sig_letters <- multcompView::multcompLetters(p_matrix1, threshold = 0.05)
+      df1 <- data.frame(
+        Group  = names(sig_letters$Letters),
+        sig_letters = sig_letters$Letters)
+      
+      y_max <- max(d1[, i])
+            
+      p <- ggplot(d1, aes(x = Group, y = eval(parse(text = paste0('`', colnames(d1)[i], '`'))))) +
+        geom_jitter(aes(color = Group), alpha = 0.5,
+                    position = position_jitter(width = 0.2)) +
+        scale_color_manual(values = cols) +
+        stat_summary(aes(color = Group),
+                     fun.data = mean_cl_normal, fun.args = list(mult = 1),
+                     geom = 'errorbar', width = 0.5) +
+        stat_summary(aes(color = Group), fun = mean, 
+                     geom = 'point', size = 3,
+                     position = position_dodge(width = 0.5)) +
+        stat_summary(aes(group = 1), fun = mean, 
+                     geom = 'line') +
+        geom_text(aes(x = Group, y = 1.15*y_max, label = sig_letters),
+                  data = df1, color = cols) +
+        labs(x = '', y = 'Abundance (MFTC)') +
+        theme_classic()
+        
+      print(p)
+
+    })
+  
+  dev.off()
+}
+
+```
+
+
+lineplot
+
+```{r}
+lst.block <- list(
+  c('18:2-carnitine',
+    '6K-5aOH-CHO',
+    '16:0-carnitine',
+    '18:1-carnitine',
+    'acylcarnitine',
+    'Gb3 d18:1/22:0',
+    'Gb3 d18:1/24:1',
+    'LacCer d18:1/24:1',
+    'Gb3 d18:1/23:0',
+    'Gb3 d18:1/24:0'),
+  c('PE38:6p(16:0/22:6)',
+    'PE40:6p',
+    'PE38:6p',
+    'PE40:6p(18:0/22:6)'),
+  c('SL d18:1/22:0h',
+    'SL d18:1/18:0h',
+    'SL d18:1/20:0h',
+    'SL d18:1/24:0h',
+    'SL d18:1/22:1h',
+    'SL',
+    'SL d18:1/18:1h',
+    'SL d18:1/20:1h'),
+  c('PC42:7(22:6/20:1)',
+    'PC42:2',
+    'PC34:2(16:1/18:1)',
+    'PC40:7(22:6/18:1)',
+    'PG34:1',
+    'PC34:3(16:1/18:2)',
+    'PC42:4',
+    'PC38:1',
+    'PC38:2p',
+    'PC36:3p(16:0/20:3)',
+    'PC38:5(22:5/16:0)',
+    'PC36:5',
+    'BMP',
+    'PC40:1',
+    'PC34:3',
+    'PC36:3',
+    'PC42:6',
+    'PC36:3(18:1/18:2)',
+    'PC36:2',
+    'PC',
+    'PC40:5p(18:0/22:5)',
+    'PC42:7',
+    'BMP36:3(18:2/18:1)',
+    'PC40:7'),
+  c('PS 40:5',
+    'PS 38:3',
+    'LacCer d18:1/15:0',
+    '24S,25-EPOXY-CHO',
+    'PS 36:1',
+    'lanosterol',
+    'PS 36:1(18:0/18:1)',
+    'PS 36:2',
+    'FFA18:0',
+    'PE40:6(20:2/20:4)',
+    'FFA16:0',
+    'FFA',
+    'TAG54:3(18:1)',
+    'Cer d18:0/18:0',
+    'Cer d18:0/21:0',
+    'Cer d18:1/24:1',
+    'FFA22:6',
+    'PS'),
+  c('dihydrolanosterol',
+    '7a-OH-cholestenone',
+    'Cholesta-46-dien-3-one',
+    'PS 38:4',
+    'dihydro-T-MAS',
+    '5a,6a-EPOXY-CHO',
+    '7K-CHO')
+)
+
+file.pdf <- file.path(output.dir, 'line.pdf')
+
+if (!file.exists(file.pdf)) {
+  cairo_pdf(file.pdf, onefile = T, w = 4, h = 3, family = font_family)
+  
+  plyr::l_ply(lst.block, function(x) {
+    print(x)
+    d1 <- data.frame(Group = ds11$GroupID, scale(d11[, x]), check.names = F) %>%
+      reshape2::melt(id.var = 'Group') %>%
+      dplyr::mutate(
+        variable = paste0(as.numeric(variable), ' - ', variable)
+      )
+    
+    d2 <- d11[, x] %>% 
+      sapply(function(x) {
+        vaggregate(scale(x), ds11$GroupID, mean)
+      }) %>%
+      `rownames<-`(levels(ds11$GroupID)) %>%
+      reshape2::melt() %>%
+      dplyr::filter(Var1 %in% c('S1', 'S4')) %>%
+      dplyr::mutate(
+        Var2 = as.numeric(Var2)
+      )
+    
+    
+    p <- ggplot(d1, aes(x = Group, y = value)) +
+      stat_summary(aes(group = variable, color = variable), fun = mean, 
+                   geom = 'line') +
+      # ggrepel::geom_text_repel(data = subset(d2, Var1 == 'S1'), nudge_x = -0.2,
+      #                          force = 2,
+      #                          aes(x = Var1, y = value, label = Var2)) +
+      # ggrepel::geom_text_repel(data = subset(d2, Var1 == 'S4'), nudge_x = 0.2,
+      #                          force = 2,
+      #                          aes(x = Var1, y = value, label = Var2)) +
+      labs(x = '', y = 'Normalized abundance (SD)') +
+      guides(color = guide_legend(title = NULL)) +
+      theme_classic() +
+      theme(legend.text = element_text(size = 8),
+            legend.position = 'none')
+    
+    print(p)
+  })
+  
+  dev.off()
+}
+
+```
+
+
+## Ratio barplot + error bar + jitter
+
+```{r}
+d1 <- data.frame(Group = ds11$GroupID,
+                 d11[, c("Cho/PC-1", "SM+Cho/PC-1", "Cho/PC-2", "SM+Cho/PC-2")],
+                 check.names = F) %>%
+  reshape2::melt(id.var = 'Group')
+
+d2 <- ht.res.letters[c("Cho/PC-1", "SM+Cho/PC-1", "Cho/PC-2", "SM+Cho/PC-2"), ] %>%
+  reshape2::melt()
+
+ymax <- max(d1$value)
+
+p <- ggplot(d1, aes(x = variable, y = value)) +
+  stat_summary(aes(fill = Group), geom = 'bar', fun = mean,
+               alpha = 0.6,
+               position = position_dodge2(width = 1)) +
+  stat_summary(aes(color = Group), geom = 'errorbar',
+               position = position_dodge2(width = 1),
+               fun.data = mean_cl_normal, fun.args = list(mult = 1)) +
+  geom_jitter(aes(color = Group), alpha = 0.5,
+              position = position_jitterdodge(dodge.width = 0.9)) +
+  geom_text(data = d2, aes(x = Var1, y = 1.05 * ymax, color = Var2, label = value),
+            position = position_dodge2(width = 0.9), hjust = 0.5) +
+  labs(y = 'Ratio', x = '') +
+  theme_classic()
+
+file.pdf <- file.path(output.dir, 'ratio_barplot.pdf')
+
+if (!file.exists(file.pdf)) {
+  cairo_pdf(file.pdf, onefile = T, width = 5, height = 3)
+  print(p)
+  dev.off()
+}
+```
+
+## Barplot
+
+```{r}
+attr11 <- getAttrs(colnames(d11))
+attr11[574:600, 'class'] <- 'Sterol & oxysterol'
+attr11[601:625, 'class'] <- 'Lipid class'
+attr11[626:629, 'class'] <- 'Ratio'
+attr11[256, 'class'] <- 'CS'
+
+attr11 <- attr11 %>%
+  mutate(
+    class = forcats::fct_lump_min(class, 2, other_level = 'Others')
+  )
+
+d3 <- lapply(d11, function(x) {
+      as.data.frame(vaggregate(x, ds11$GroupID, mean_cl_normal, mult = 1))['ymax', ] %>%
+      unlist
+    }) %>% 
+      do.call(rbind, .) %>%
+      `colnames<-`(c('S1', 'S2', 'S3', 'S4')) %>%
+    reshape2::melt() %>%
+  magrittr::set_colnames(c('rn', 'variable', 'y'))
+
+
+
+d2 <- data.frame(ht.res.letters, class = attr11[, 'class'], rn = rownames(ht.res.letters)) %>%
+ reshape2::melt(id.vars = c('class', 'rn')) %>%
+ dplyr::left_join(d3, by = c('rn', 'variable'))
+
+ plyr::l_ply(unique(attr11[, 'class']), function(class.i) {
+  ind <- which(attr11[, 'class'] == class.i)
+  print(class.i)
+  if (T) {
+    n_page <- ceiling(length(ind) / 16)
+    
+    n <- length(ind)
+    n_count <- 0
+    
+    for (i in 1:n_page) {
+      ## number of species to plot
+      n_cur <- ceiling((n - n_count) / (n_page - i + 1))
+      
+      ind_cur <- ind[(n_count + 1):(n_count + n_cur)]
+      
+      n_count <- n_count + n_cur
+      
+      ymax.class <- max(d11[, ind_cur])
+      
+      d1 <- data.frame(Group = ds11$GroupID,
+                       d11[, ind_cur],
+                       check.names = F) %>%
+        reshape2::melt(id.var = 'Group')
+      
+      dd2 <- subset(d2, rn %in% colnames(d11)[ind_cur])
+      
+      p <- ggplot(d1, aes(x = variable, y = value)) +
+        stat_summary(aes(fill = Group), geom = 'bar', color = 'black', 
+                     fun = mean,
+                     alpha = 1,
+                     position = position_dodge2(width = 1)) +
+        stat_summary(aes(group = Group), geom = 'errorbar', 
+                     position = position_dodge2(width = 1),
+                     fun.data = mean_cl_normal, fun.args = list(mult = 1)) +
+        # geom_jitter(aes(color = Group), alpha = 0.5,
+        #             position = position_jitterdodge(dodge.width = 0.9)) +
+        geom_text(data = dd2, aes(x = rn, y = y + 0.01 * ymax.class, 
+                                  label = value, color = variable),
+                  size = 2.5, vjust = 0,
+                  position = position_dodge2(width = 0.9)) +
+        # scale_y_sqrt() +
+        labs(y = 'Abundance (MFT)', x = '', title = class.i) +
+        theme_classic() +
+        theme(legend.position = 'none',
+              plot.margin = margin(0.5, 0.5, 0, 1, unit = 'cm'),
+              axis.text.x = element_text(angle = 15, hjust = 0.9, vjust = 0.9))
+       
+      w.pdf <- 7 / 16 * n_cur + 1
+
+      file.pdf <- file.path(output.dir, 'barplot', paste0(make.names(class.i), '_', sprintf('%.2d', i), '.pdf'))
+      file.tiff <- file.path(output.dir, 'barplot', paste0(make.names(class.i), '_', sprintf('%.2d', i), '.tiff'))
+
+      dir.create(file.path(dirname(file.pdf)))
+
+      
+      ggsave(file.pdf, p, width = w.pdf, height = 3)
+      ggsave(file.tiff, p, width = w.pdf, height = 3,
+             units = 'in', compression = 'lzw+p', dpi = 300)
+    }
+  }
+  
+})
+
+```
+

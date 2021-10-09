@@ -1,0 +1,143 @@
+```{r}
+library(dplyr, quietly = TRUE)
+library(ggplot2)
+d10 <- read.csv( "/Users/leump/Desktop/R/Github/Plot/data/heatmap_data/data_TAG.csv", header=T, row.names = 1,sep=",",check.names = FALSE)
+s10 <- read.csv( "/Users/leump/Desktop/R/Github/Plot/data/heatmap_data/sample_TAG.csv", header=T, row.names = 1,sep=",",check.names = FALSE)
+v10 <- read.csv( "/Users/leump/Desktop/R/Github/Plot/data/heatmap_data/var_TAG.csv", header=T, row.names = 1,sep=",",check.names = FALSE)
+ht <- read.csv("/Users/leump/Desktop/R/Github/Plot/data/heatmap_data/hypothesis_test_TAG.csv", header=T, row.names = 1, sep=",", check.names = FALSE)
+```
+
+```{r}
+d20 <- d10[-c(33:37), ]
+group <- factor(s10$Group[1:32],
+                levels =c("gl1-CK",
+                          "29-2-CK",
+                          "29s-CK",
+                          "21d-CK","gl1-TM",
+                          "29-2-TM",
+                          "29s-TM",
+                          "21d-TM"))
+
+aov <- sapply(d20, function(x){
+            # a <- oneway.test(x~group)
+              a <- kruskal.test(x~group)
+              a$p.value
+              })
+
+aov <- t(aov)
+aov_TAG <- aov[,stringr::str_detect(colnames(aov), "TAG")]
+aov_TAG <- as.data.frame(aov_TAG)
+
+colnames(aov_TAG) <- "p value"
+
+label_aov <- lapply(rownames(aov_TAG),function(x){
+    ifelse(aov_TAG[x,]<0.05,paste0(x,"*"),x)
+    })
+
+label_aov <- do.call(rbind, label_aov)
+```
+
+```{r}
+# d30筛选出含有TAG的列
+d30 <- d20[, stringr::str_detect(colnames(d20), "TAG")]
+
+# 提取d30行名
+colnames_d30 <- colnames(d30)
+
+# scale d30数据
+d30 <- sapply(d30,function(x){
+              scale(x)
+              })
+
+# d20组别名称赋予d30
+rownames(d30) <- rownames(d20)
+
+# 转置
+d30 <- t(d30)
+
+# 求每组平均值
+d30_mean <- apply(d30,1,function(x){
+  plyr::vaggregate(x,group,mean)
+})%>%t
+colnames(d30_mean) <- levels(group) # 每列组别名称
+rownames(d30_mean) <- label_aov # 带星号的行名赋予平均值数据
+
+# 提取假设检验种含有TAG的行
+ht <- ht[stringr::str_detect(rownames(ht), "TAG"),]
+
+# 假设检验结果转化为a ab b
+letters <- lapply(rownames(d30),function(i){
+                  p_matrix <- matrix(1,ncol=nlevels(group),nrow=nlevels(group),dimnames =                       list(levels(group),levels(group)))
+                  p_matrix[lower.tri(p_matrix)] <- ht[i,stringr::str_detect(colnames(ht),                       "Dunn")]%>%unlist
+                  sig_letters <- multcompView::multcompLetters(p_matrix, threshold =                            0.05)$Letters
+                  })
+
+letters_mult <- do.call(rbind, letters)
+
+# 带星号的行名赋予假设检验结果
+rownames(letters_mult) <- label_aov
+
+# TAG <- pheatmap::pheatmap(
+#                           d30_mean,
+#                           cluster_rows = FALSE,
+#                           cluster_cols=FALSE,
+#                           color = colorRampPalette(c("navy", "white", "firebrick3"))(50),
+#                           cellwidth=20
+#                           )
+```
+
+```{r}
+d30_mean_m <- d30_mean[nrow(d30_mean):1, ] # 倒装行
+d30_mean_m <- d30_mean_m[,ncol(d30_mean_m):1] # 倒转列
+d30_melt_mean <- reshape2::melt(d30_mean_m) # 格式转换
+
+# d30_melt_mean$Var1 <- stringr::str_pad(d30_melt_mean$Var1,20,"left")
+# d30_melt_mean <- d30_melt_mean[nrow(d30_melt_mean):1,]
+
+letters_m <- letters_mult[nrow(letters_mult):1, ]
+letters_m <- letters_m[, ncol(letters_m):1]
+letters_melt <- reshape2::melt(letters_m)
+
+# letters_melt$Var1 <- stringr::str_pad(letters_melt$Var1,20,"left")
+# letters_melt <- letters_melt[nrow(letters_melt):1,]
+
+
+TAG <- ggplot(d30_melt_mean, 
+              aes(x = Var2,y = Var1)
+              ) +
+       geom_tile(aes(fill = value), 
+                 colour="white"
+                 ) +
+       coord_fixed(ratio = 0.2) +
+       scale_fill_gradient2(low = "blue",
+                            mid= "white", 
+                            high = "red", 
+                            breaks = c(-1,-0.8,-0.6,-0.4,-0.2,-0,0.2,0.4,0.6,0.8,1)
+                            ) +
+       geom_text(data = letters_melt,
+                 aes(x = Var2, y = Var1, label = value)
+                 ) +
+       xlab(NULL) +
+       ylab(NULL) +
+       theme(panel.background = element_blank(),
+             panel.border = element_blank(),
+             panel.grid.major = element_blank(),
+             legend.title = element_blank(),
+             axis.ticks.y = element_blank(), 
+             axis.ticks.x = element_blank(),
+             axis.text.x = element_text(size = 15),
+             axis.text.y = element_text(size = 15,hjust = 0),
+             legend.key.height = grid::unit(2, "cm"),
+             legend.position = c(1.08, 0.51)
+             )
+print(TAG)
+tiff("TAG.tiff", res = 300, width = 4000, height = 4000, compression = "lzw")
+print(TAG)
+dev.off()
+
+pdf("TAG.pdf", width =15, height = 15)
+print(TAG)
+dev.off()
+```
+
+

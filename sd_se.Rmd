@@ -1,0 +1,149 @@
+```{r}
+library(reshape2)
+library(plyr)
+library(ggplot2)
+d10 <- read.csv("data.csv",check.names = F,row.names = 1)
+s10 <- read.csv("sample.csv",row.names = 1)
+v10 <- read.csv("var.csv",row.names = 1)
+```
+
+```{r}
+group <- factor(s10$Group)
+result <- lapply(colnames(d10),function(x){
+    out <- vaggregate(d10[,x],group,mean_cl_normal)
+    out <- matrix(unlist(out), nrow = nrow(out), ncol = ncol(out)) %>% t
+    data.frame(Group = levels(group),
+    lipid=x,
+    mean = out[,1],
+    min=out[,2],
+    max= out[,3]
+    )
+})%>% do.call(rbind, .)
+
+sd <- lapply(colnames(d10),function(x){
+    sd_1 <- sd(d10[,x])
+    mean_1 <- mean(d10[,x])
+    data.frame(mean <- mean_1,
+               sd=sd_1)
+})%>%do.call(rbind,.)
+rownames(sd) <- colnames(d10)
+colnames(sd) <- c("mean","Standard Deviation")
+write.csv(result,"mean&errorbar.csv",row.names = F)
+write.csv(sd,"mean&sd.csv")
+```
+
+```{r 2020-069-C-01}
+f10 <- '/Users/leump/Desktop/2020-069-C-01/data_069/01_2020-069-C-01 original data(umol per g protein) 原始数据.xlsx'
+
+d10 <- read.data(f10, type = 'data', sheet = 'data.csv')
+
+s10 <- read.data(f10, type = 'sample', sheet = 'sample.csv')
+
+v10 <- read.data(f10, type = 'var', sheet = 'var.csv')
+
+d11 <- d10[3:10, 455:480]
+s11 <- s10[3:10, ]
+group <- factor(s11$Group, levels = c('Synthetic', 'Contractile'))
+
+lvls <- forcats::fct_inorder(v10[, 1]) %>% levels()
+## group avergage
+d <- t(d11) %>% 
+  apply(1, function(x) {
+    vaggregate(x, group, mean)
+  }) %>% `rownames<-`(
+    levels(group)
+  ) %>% reshape2::melt() %>%
+  mutate(
+    Var1 = factor(Var1, levels = levels(group)),
+    Var2 = factor(Var2, levels = lvls)
+  )
+
+
+res <- lapply(colnames(d11),function(x){
+    out <- vaggregate(d11[, x], group, mean_cl_normal)
+    out <- matrix(unlist(out), nrow = nrow(out), ncol = ncol(out)) %>% t
+    data.frame(
+    Group = levels(group),
+    lipid = x,
+    mean = out[,1],
+    max = out[,3], 
+    min = out[,2]
+    )
+})%>% do.call(rbind, .) %>%
+  mutate(
+    Group = factor(Group, levels = levels(group)),
+    lipid = factor(lipid, levels = lvls)
+  )
+
+p <- ggplot(res, aes(x = lipid, y = mean, fill = Group)) +
+      geom_bar(stat = 'identity', position = 'dodge', colour="black") +
+      scale_fill_grey(start = 0, end = 0.95) +
+      geom_bar(stat = 'identity', position = 'dodge') +
+      guides(fill = guide_legend(title = 'Group', ncol = 1)) +
+      geom_errorbar(aes(ymin = mean, ymax = max),
+                    width = 0.5,
+                    position = position_dodge(0.9)) +
+      labs(x = '', 
+           y = 'umol/g protein',
+           title = ''
+           ) +
+      theme_bw() +
+      theme(axis.text.x = element_text(angle = 45, vjust = 0.9, hjust = 0.8))
+p
+
+output.dir <- '/Users/leump/Desktop/'
+ggsave('barplot.pdf', p, file.path(output.dir), 
+       device = cairo_pdf, w = 8, h = 6, units = 'in')
+ggsave('barplot.tiff', p, file.path(output.dir),
+       device = 'tiff', w = 8, h = 6, units = 'in', 
+       compression = 'lzw+p', dpi = 300)
+```
+
+```{r barplot}
+p1 <- ggplot(res, aes(x = lipid, y = mean, fill = Group)) +
+      geom_bar(stat = 'identity', position = 'dodge', colour="black") +
+      scale_fill_grey(start = 0, end = 0.95) +
+      geom_errorbar(aes(ymin = mean, ymax = max),
+                    width = 0.5,
+                    position = position_dodge(0.9)) + 
+      guides(fill = guide_legend(title = 'Group', ncol = 1)) +
+      coord_cartesian(ylim = c(100, 650)) +
+      labs(x = '', 
+           y = '',
+           title = ''
+           ) +
+      theme_bw() +
+      theme(axis.text.x = element_blank(),axis.ticks.x = element_blank())
+p1
+p2 <- ggplot(res, aes(x = lipid, y = mean, fill = Group)) +
+            geom_bar(stat = 'identity', position = 'dodge', colour="black") +
+            scale_fill_grey(start = 0, end = 0.95) +
+            guides(fill = guide_legend(title = 'Group', ncol = 1)) +
+            geom_errorbar(aes(ymin = mean, ymax = max),
+                          width = 0.5,
+                          position = position_dodge(0.9)) + 
+            coord_cartesian(ylim = c(0,60)) + 
+            labs(x = '', 
+                 y = 'umol/g protein',
+                 title = ''
+                 ) +
+            theme_bw() + 
+            theme(axis.text.x = element_text(angle = 45, vjust = 0.9, hjust = 0.8))
+p2
+p <- ggarrange(p1, p2, 
+               heights=c(1/3, 2/3),
+               ncol = 1, nrow = 2,
+               common.legend = TRUE,
+               legend="right",
+               align = "v"
+               )
+p
+
+output.dir <- '/Users/leump/Desktop/'
+ggsave('barplot.pdf', p, file.path(output.dir), 
+       device = cairo_pdf, w = 10, h = 8, units = 'in')
+ggsave('barplot.tiff', p, file.path(output.dir),
+       device = 'tiff', w = 10, h = 8, units = 'in', 
+       compression = 'lzw+p', dpi = 300)
+```
+

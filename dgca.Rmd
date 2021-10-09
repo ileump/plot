@@ -1,0 +1,317 @@
+---
+title: "DGCA"
+author: "leump"
+date: "10/8/2021"
+output: html_document
+---
+
+```{r}
+source('Rscript/setup.R')
+source('Rscript/functions.R')
+source('Rscript/app_functions.R')
+source('Rscript/app_functions_2.R')
+# source('Rscript/pathway_funs.R')
+
+options(useFancyQuotes = FALSE)
+options(java.parameters = '-Xmx8000m')
+
+knitr::opts_chunk$set(
+  cache = T,
+  message = F,
+  dpi = 300
+)
+
+library(plyr)
+library(ggplot2)
+library(magrittr)
+library(kableExtra)
+library(dplyr)
+library(circlize)
+library(WGCNA)
+library(DGCA)
+library(igraph)
+
+# library(extrafont)
+# loadfonts(device = 'win', quiet = T)
+# par(family = 'Liberation')
+# windowsFonts(
+#   serif = 'Liberation Serif',
+#   sans = 'Liberation Sans',
+#   mono = 'Liberation Mono'
+# )
+
+par(family = 'sans')
+
+prefix <- '130'
+output.dir <- file.path('output', prefix)
+Sys.setlocale("LC_ALL","Chinese")
+
+if (!dir.exists(output.dir)) {
+    dir.create(output.dir, recursive = T)
+}
+```
+
+
+
+```{r}
+megenaGraph <- function(x, v, MEGENA.ouput, mark.module = F, vlabel = F) {
+    # Plot network of modified MEGENA output
+    #
+    # Args:
+    #   x: A data frame with columns: row, col, zScoreDiff, Class, color. row, col, 
+    #      zScoreDiff are output from MEGENA::calculate.PFN. Class is modified from 
+    #      Classes, append '-' or '+' to '-/-' and '+/+' to indicate decrease or 
+    #      increase of correlation, determined based on zScoreDiff.
+    #   v: A data frame of vertice information
+    #   MEGENA.output: Ouptut of do.MEGENA
+    #   mark.module: mark modules in the network
+    #   vlabel: label all the nodes
+    #
+    # Returns:
+    #   Plot network
+
+    ## construct network 
+    g <- igraph::graph.data.frame(x, directed = FALSE)
+
+    V(g)$color <- v[attr(V(g), 'names'), 'color']
+
+    if (vlabel) {
+        V(g)$cex <- 0.5
+        V(g)$size <- as.numeric(MEGENA.output$node.summary[attr(V(g), 'names'), 'node.degree']) ** 0.3 * 3
+    } else {
+        ## Vertice label size is 0 if degree < 4
+        V(g)$cex <- 0.005
+        # vertice size is proportional to sqrt of degree
+        V(g)$size <- as.numeric(MEGENA.output$node.summary[attr(V(g), 'names'), 'node.degree']) ** 0.3 * 1.5
+    }
+    ## Vertice size is 1, 1/2, 1/3 for hub at sccale 1, 2, 3
+    for(i in 1:length(MEGENA.output$hub.output$hub.list)) {
+        V(g)$cex <- ifelse(
+            attr(V(g), 'names') %in% MEGENA.output$hub.output$hub.list[[i]],
+            1 / i**0.2, V(g)$cex) * 1.2
+    }
+
+    E(g)$color <- x$color
+
+
+    # In MEGENA.output$module.output$modules, the first one is parent module which 
+    # includes all the nodes
+    groupList <- MEGENA.output$module.output$modules[-1]
+    groupColours <- c(rainbow(length(groupList), alpha = 0.1))
+
+    # apply layout
+    set.seed(5)
+    l <- layout_with_dh(g)
+    l <- norm_coords(l, ymin = -1, ymax = 1, xmin = -1, xmax = 1)
+
+    par(mar = c(5.1, 4.1, 4.1, 10.1))
+    if (mark.module) {
+        plot(g,
+             mark.groups=groupList, # Mark the groups
+             mark.col= groupColours,
+             mark.border = NA,
+             edge.width = 0.6,
+             vertex.size = V(g)$size,
+             #vertex.color = vertex.color,
+             #vertex.label = vertex.labels, 
+             vertex.label.color = 'black',
+             vertex.label.cex = V(g)$cex,
+             vertex.label.dist = 0.3,
+             rescale = TRUE, layout = l, axes = FALSE,
+             main = '')
+
+    } else {
+        plot(g,
+             # mark.groups=groupList, # Mark the groups
+             # mark.col= groupColours,
+             # mark.border = NA,
+             edge.width = 0.6,
+             vertex.size = V(g)$size,
+             #vertex.color = vertex.color,
+             #vertex.label = vertex.labels, 
+             vertex.label.color = 'black',
+             vertex.label.cex = V(g)$cex,
+             vertex.label.dist = 0.3,
+             rescale = TRUE, layout = l, axes = FALSE,
+             main = '')
+    }
+
+    ## vertice legend label
+    v.legend <- data.frame(
+        label = unique(v[, 'class']),
+        color = unique(v[, 'color'])
+    ) %>% dplyr::filter(
+        label %in% v[c(x$row, x$col), 'class']
+    )
+
+    ## Vertices
+    legend(x=1.2, y=1, 
+           y.intersp = 1,
+           v.legend$label, pch=21,
+           pt.bg = v.legend$color,
+           col="#777777", pt.cex=3, cex=1.2, bty="n", ncol=1)
+
+    ## edge legend label
+    e.legend <- dplyr::distinct(x, Class, color)
+    e.legend <- e.legend[order(e.legend$Class), ] %>% 
+        dplyr::mutate(
+            label = paste(names(table(x$Class)), table(x$Class))
+        )
+    ## Edges
+    legend(x=-1, y=1.3, 
+           y.intersp = 1,
+           e.legend$label, lty = 1, lwd = 4,
+           col = e.legend$color,
+           pt.cex=2, cex=1.2, bty="n", ncol=5)
+}
+
+megenaGraphPipeline <- function(x, v, plotModule = F) {
+    # Plot network of modified MEGENA output
+    #
+    # Args:
+    #   x: A data frame which is the ouptut of ddcorALL
+    #   plotModule: A boolean whether modules should be plotted
+    #
+    # Returns:
+    #   Plot network
+
+    ## MEGENA
+    ddcor_res_sig <- x[x$pValDiff < 0.05, ]
+    ddcor_res_megena <- ddcor_res_sig[, colnames(ddcor_res_sig) %in% 
+                                          c("Gene1", "Gene2", "zScoreDiff")]
+    ddcor_res_megena$zScoreDiff <- abs(ddcor_res_megena$zScoreDiff)
+    ## call MEGENA::calculate.PFN
+    pfn_res <- MEGENA::calculate.PFN(ddcor_res_megena, doPar = F, 
+                                     num.cores = 4)
+
+    pfn_res$weight <- (pfn_res$weight/max(pfn_res$weight)) * 0.999999999
+
+    ## construct network 
+    g <- igraph::graph.data.frame(pfn_res, directed = FALSE)
+
+    ## call do.MEGENA
+    MEGENA.output <- MEGENA::do.MEGENA(g, mod.pval = 0.05, 
+                                       hub.pval = 0.05, remove.unsig = TRUE, min.size = 10, 
+                                       max.size = 100, doPar = F, num.cores = 4, 
+                                       n.perm = 100, save.output = F)
+
+    # join pfn and ddcor_res_sig
+    pfn_res <- merge(pfn_res, ddcor_res_sig, all.x = T, sort = F,
+                     by.x = c('row', 'col'), by.y = c('Gene1', 'Gene2'))
+
+    # Append - or + to -/-, +/+ to differentiate increase and decrease in case (the 2nd level in comparison)
+    pfn_res <- pfn_res %>% dplyr::mutate(
+        Class = ifelse(
+            Classes %in% c('-/-', '+/+'),
+            paste0(Classes, ifelse(zScoreDiff > 0, '+', '-')),
+            as.character(Classes)),
+        color = WGCNA::labels2colors(as.numeric(as.factor(Class)),
+                                     colorSeq = standardColors(20)[c(1, 2, 9, 4, 5, 6, 8, 3, 10, 11, 12)])
+    )
+
+    # plot the whole network
+    megenaGraph(pfn_res, v, MEGENA.output, vlabel = F)
+
+    if (plotModule) {
+        for (i in 2:length(MEGENA.output$module.output$modules)) {
+            # filter pfn_res, row and col must be nodes in the module
+            pfn_res_m <- pfn_res %>% dplyr::filter(
+                row %in% MEGENA.output$module.output$modules[[i]] &
+                    col %in% MEGENA.output$module.output$modules[[i]]
+            )
+            # label vertices if number of edges is less than 100
+            if (nrow(pfn_res_m) > 60) {
+                megenaGraph(pfn_res_m, v, MEGENA.ouput, vlabel = F)
+            } else {
+                megenaGraph(pfn_res_m, v, MEGENA.ouput, vlabel = T)
+            }
+        }
+    }
+}
+
+
+```
+
+```{r}
+d10 <- read.csv("/Users/leump/Desktop/2021-098-A-02-II/code/data/data.csv",check.names = F,row.names = 1)
+s10 <- read.csv("/Users/leump/Desktop/2021-098-A-02-II/code/data/sample1.csv",check.names = F,row.names = 1)
+v10 <- read.csv("/Users/leump/Desktop/2021-098-A-02-II/code/data/var.csv",check.names = F,row.names = 1)
+
+g <- factor(s10$Group)
+j <- 6
+g_pair <- combn(levels(g), 2)
+contrast <- paste0(rev(g_pair[, j]), collapse = ' vs ')
+
+selected_name <- subset(s10, s10$Group == g_pair[, j][1] | s10$Group == g_pair[, j][2]) %>% rownames()
+d10 <- d10[selected_name, ]
+s10 <- s10[selected_name, ]
+```
+
+```{r}
+d20 <- t(d10)
+# s20 <- as.matrix(s10)
+s20 <- model.matrix(~ as.factor(s10$Group) + 0,
+                   data = d10)
+colnames(s20) <- c(g_pair[, j][1], g_pair[, j][2])
+# v10$`Class 1`[550:572] <- rownames(v10)[550:572]
+gg_color_hue_row <- function(n) {
+        set.seed(123)
+        hues = sample(15:375, n + 1 , replace = F)
+        hcl(h = hues, l = 65, c = 100)[1:n]
+      }
+pal <- gg_color_hue_row(60)
+for (i in 1:length(unique(v10$`Class 1`))) {
+    for (m in 1:nrow(v10)) {
+        if (v10[m,1]==unique(v10$`Class 1`)[i]) {
+            v10$color[m] <- pal[i]
+
+        }
+    }
+}
+v20 <- data.frame(names=rownames(v10),class=v10$`Class 1`,color=v10$color)
+rownames(v20) <- rownames(v10)
+ddcor_res = ddcorAll(inputMat = d20, design = s20, 
+                     compare = c(g_pair[, j][2], g_pair[, j][1]),
+                     heatmapPlot = T, 
+                     customize_heatmap = T, labRow = NA, labCol = NA,
+                     xlab = g_pair[, j][2], ylab = g_pair[, j][1]
+                     )
+ddcor_res_padj <- ddcor_res[ddcor_res$pValDiff<0.05,]
+
+
+if (T) {
+  x <- ddcor_res
+  v <- v20
+  ## MEGENA
+  ddcor_res_sig <- x[x$pValDiff < 0.05, ]
+  ddcor_res_megena <- ddcor_res_sig[, colnames(ddcor_res_sig) %in% 
+                                        c("Gene1", "Gene2", "zScoreDiff")]
+  ddcor_res_megena$zScoreDiff <- abs(ddcor_res_megena$zScoreDiff)
+  ## call MEGENA::calculate.PFN
+  pfn_res <- MEGENA::calculate.PFN(ddcor_res_megena, doPar = F, 
+                                   num.cores = 4)
+  
+  pfn_res$weight <- (pfn_res$weight/max(pfn_res$weight)) * 0.999999999
+  
+  ## construct network 
+  g <- igraph::graph.data.frame(pfn_res, directed = FALSE)
+  
+  ## call do.MEGENA
+  MEGENA.output <- MEGENA::do.MEGENA(g, mod.pval = 0.05, 
+                                     hub.pval = 0.05, remove.unsig = TRUE, min.size = 10, 
+                                     max.size = 100, doPar = F, num.cores = 4, 
+                                     n.perm = 100, save.output = F)  
+}
+
+
+output.dir.cp <- file.path(output.dir, paste0(contrast))
+if (!dir.exists(output.dir.cp)) {
+  dir.create(output.dir.cp, recursive = T)
+}
+
+cairo_pdf(file.path(output.dir.cp, 'net.pdf'), width = 16, height = 12, onefile = T)
+set.seed(100)
+megenaGraphPipeline(ddcor_res, v20, plotModule = T)
+dev.off()
+write.csv(ddcor_res,file.path(output.dir.cp, "DGCA_result.csv"),row.names = T)
+```

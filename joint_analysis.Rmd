@@ -1,0 +1,979 @@
+# 110 Metabolomics RNAseq
+
+小鼠血液和肝脏的代谢组，和肝脏的转录组数据分析。转录组数据只有两个生物重复。
+
+```{r, include=F, echo=F, message=F, warnings=F}
+options(java.parameters = '-Xmx8000m')
+source('Rscript/setup.R')
+source('Rscript/functions.R')
+source('Rscript/app_functions.R')
+source('rscript/pathway_funs.R', encoding = 'UTF-8')
+
+
+options(useFancyQuotes = FALSE)
+
+
+knitr::opts_chunk$set(
+  cache = T,
+  message = F,
+  dpi = 300
+)
+
+library(plyr)
+library(dplyr)
+library(ggplot2)
+library(magrittr)
+library(kableExtra)
+library(pathview)
+
+library(extrafont)
+loadfonts(device = 'win', quiet = T)
+par(family = 'Liberation')
+windowsFonts(
+  serif = 'Liberation Serif',
+  sans = 'Liberation Sans',
+  mono = 'Liberation Mono'
+)
+
+par(family = 'sans')
+
+set.seed(1)
+
+prefix <- '110'
+output.dir <- file.path('output', prefix)
+Sys.setlocale("LC_ALL","Chinese")
+
+if (!dir.exists(output.dir)) {
+    dir.create(output.dir, recursive = T)
+}
+```
+
+```{r}
+d.liver.rna <- read.csv(
+    'data/肝脏转录组比较_for代谢分析.csv',
+    check.names = F
+)
+
+d10 <- d.liver.rna
+```
+
+## Setup MetaboAnalystR
+
+```{r}
+## this variable is used by .get.my.lib functions in pathway_funs.R
+metaboanalyst.db.path <- 'database/metaboanalyst/20210113'
+
+## load file from pre-defined directory
+## latest database/metaboanalyst/20210113
+## rda files from database/metaboanalyst/MetaboAnalyst4.93/
+environment(get.my.lib) <- asNamespace('MetaboAnalystR')
+assignInNamespace('.get.my.lib', get.my.lib, ns = 'MetaboAnalystR')
+
+## load the same database as in MetaboliteMappingExact and CreateMappingResultTable 
+environment(GetFinalNameMap2) <- asNamespace('MetaboAnalystR')
+assignInNamespace('GetFinalNameMap', GetFinalNameMap2, ns = 'MetaboAnalystR')
+
+## able to load qs or rda file from local directory
+environment(SetCurrentMsetLib2) <- asNamespace('MetaboAnalystR')
+assignInNamespace('SetCurrentMsetLib', SetCurrentMsetLib2, ns = 'MetaboAnalystR')
+
+## able to load rda files from database/metaboanalyst/MetaboAnalyst4.93/
+environment(CalculateHyperScore2) <- asNamespace('MetaboAnalystR')
+assignInNamespace('CalculateHyperScore', CalculateHyperScore2, ns = 'MetaboAnalystR')
+
+
+environment(PlotORA2) <- asNamespace('MetaboAnalystR')
+assignInNamespace('PlotORA', PlotORA2, ns = 'MetaboAnalystR')
+
+environment(PlotEnrichDotPlot2) <- asNamespace('MetaboAnalystR')
+assignInNamespace('PlotEnrichDotPlot', PlotEnrichDotPlot2, ns = 'MetaboAnalystR')
+
+## adjust margin
+environment(PlotMSEA.Overview2) <- asNamespace('MetaboAnalystR')
+assignInNamespace('PlotMSEA.Overview', PlotMSEA.Overview2, ns = 'MetaboAnalystR')
+
+## able to load qs or rda file from local directory
+environment(SetKEGG.PathLib2) <- asNamespace('MetaboAnalystR')
+assignInNamespace('SetKEGG.PathLib', SetKEGG.PathLib2, ns = 'MetaboAnalystR')
+
+## able to load rda files from database/metaboanalyst/MetaboAnalyst4.93/
+environment(CalculateOraScore2) <- asNamespace('MetaboAnalystR')
+assignInNamespace('CalculateOraScore', CalculateOraScore2, ns = 'MetaboAnalystR')
+
+## make sure CrossReferencing and CreateMappingResultTable load the same databases
+environment(CreateMappingResultTable2) <- asNamespace('MetaboAnalystR')
+assignInNamespace('CreateMappingResultTable', CreateMappingResultTable2, ns = 'MetaboAnalystR')
+
+
+## must load after assignInNamespace
+library(MetaboAnalystR)
+```
+
+## Liver RNA seq
+
+4.1% of input gene IDs are fail to map
+
+```{r}
+library(AnnotationDbi)
+library(clusterProfiler)
+library(topGO)
+library(rlist)
+## http://bioconductor.org/packages/3.12/data/annotation/
+library(org.Mm.eg.db)
+
+############
+# 加载基因、orgdb
+############
+message("load gene/orgdb")
+gene     <- d10$ID
+org_db <- org.Mm.eg.db
+
+message("convert SYMBOL to ENTREZID")
+eg   <- bitr(gene, fromType="SYMBOL", toType="ENTREZID", OrgDb=org_db)
+
+d10 <- dplyr::left_join(d10, eg, by = c('ID' = 'SYMBOL'))
+
+d10.entrez <- d10 %>%
+    filter(
+        !is.na(ENTREZID)
+    ) %>%
+    tibble::column_to_rownames('ENTREZID')
+
+
+# AnnotationDbi::mget(gene, org.Mm.egSYMBOL, ifnotfound=NA)
+
+```
+
+```{r, eval=F}
+############
+# GO富集分析
+############
+message("start GO analysis")
+message('CC')
+ego_cc <- enrichGO(gene          = gene,
+                   OrgDb         = org_db,
+                   ont           = "CC",
+                   pAdjustMethod = "BH",
+                   pvalueCutoff  = 0.05,
+                   qvalueCutoff  = 1,
+                   readable      = TRUE)
+message('BP')
+ego_bp <- enrichGO(gene          = gene,
+                   OrgDb         = org_db,
+                   ont           = "BP",
+                   pAdjustMethod = "BH",
+                   pvalueCutoff  = 0.05,
+                   qvalueCutoff  = 1,
+                   readable      = TRUE)
+message('MF')
+ego_mf <- enrichGO(gene          = gene,
+                   OrgDb         = org_db,
+                   ont           = "MF",
+                   pAdjustMethod = "BH",
+                   pvalueCutoff  = 0.05,
+                   qvalueCutoff  = 1,
+                   readable      = TRUE)
+
+############
+# BP/CC/MF 绘图
+############
+go.pdf <- file.path(output.dir, "enrich_go.pdf")
+                       
+cairo_pdf(go.pdf, onefile = T, w = 12, h = 5, family = 'sans')
+dotplot(ego_bp,showCategory=20)
+dotplot(ego_cc,showCategory=20)
+dotplot(ego_mf,showCategory=20)
+dev.off()
+
+go.xlsx <- file.path(output.dir, 'enrich_go.xlsx')
+
+wb <- XLConnect::loadWorkbook(go.xlsx, create = T)
+XLConnect::createSheet(wb, 'bp')
+XLConnect::writeWorksheet(wb, ego_bp, 'bp')
+
+XLConnect::createSheet(wb, 'cc')
+XLConnect::writeWorksheet(wb, ego_cc, 'cc')
+
+XLConnect::createSheet(wb, 'mf')
+XLConnect::writeWorksheet(wb, ego_mf, 'mf')
+
+XLConnect::saveWorkbook(wb)
+XLConnect::xlcFreeMemory()
+
+############
+# KEGG分析
+############
+message("start KEGG analysis")
+
+file.kegg_enrichment <- file.path(output.dir, "enrichment_kegg.xls")
+
+kk <- enrichKEGG(gene         = gene,
+                 organism     = 'mmu',
+                 keyType = 'ncbi-geneid',
+                 pvalueCutoff = 0.05,
+                 qvalueCutoff = 1)
+
+# kk_enrich <- as.data.frame(kk)
+# kk_enrich$geneID <- unlist(lapply(1:length(kk_enrich$geneID), function(t){  paste(eg[[1]][eg[[2]] %in% unlist(strsplit(kk_enrich$geneID[t], "/"))], collapse = "/")  }))
+
+kegg_pdf <- file.path(output.dir, "enrichment_kegg.pdf")
+if(nrow(kk_enrich) >= 1){
+	cairo_pdf(kegg_pdf, onefile = T, height=5,width=12, family = 'sans')
+	dotplot(kk,showCategory=20) %>% print
+	dev.off()
+	XLConnect::writeWorksheetToFile(
+	  file.kegg_enrichment, kk_enrich, sheet = 'KEGG', rownames=F)
+}
+
+
+
+```
+
+
+## Pathview
+
+```{r}
+##------------------------------------------------------
+## Pathview
+##------------------------------------------------------
+pathviewWrap <- function(gene.ht, cpd.ht, pathways, organism,
+                         out.suffix, kegg.dir, out.dir.1, out.dir.2) {
+    ## kegg.dir is relative path from out.dir
+    ## out.dir.1 is the relative path to store pathview map
+    ## out.dir.2 is the relative path to store annotated pathway map
+    ## pathview-generated pathway maps are saved in current directory
+    if (!dir.exists(kegg.dir))
+        dir.create(kegg.dir, recursive = T)
+    
+    if (!dir.exists(out.dir.1))
+        dir.create(out.dir.1, recursive = T)
+    
+    if (!dir.exists(out.dir.2))
+        dir.create(out.dir.2, recursive = T)
+    
+    gene.data <- structure(gene.ht[, 'log2FoldChange'],
+                           names = gene.ht[, 'entrez'])
+    
+    gene.ht %<>% 
+        dplyr::mutate(
+            ## label shown on the image
+            label_img = paste0(
+                ID,
+                ifelse(padj < 0.05,
+                       ifelse(log2FoldChange < 0, '-', '+'),
+                       '')
+            )
+        )
+    
+    cpd.data <- cpd.ht %>%
+        filter(KEGG != '') %>%
+        (function(x) {structure(x$log2FC, names = x$KEGG)})
+
+    ## names(table) remove NA
+    plyr::l_ply(
+        pathways, 
+        function(pw.i) {
+            ## original    
+            file.png <- paste(pw.i, out.suffix, 'png', sep = '.')
+            ## pathview
+            img.file <- file.path(out.dir.1, file.png)
+            ## pathview annotate
+            out.file <- file.path(out.dir.2, 
+                                  stringi::stri_replace_all_fixed(file.png, 'png', 'pdf'))
+
+            if (file.exists(img.file) & file.exists(out.file)) {
+                print(paste('Skip', img.file))
+                return(invisible())
+            }
+            
+            tryCatch(
+                pv.out <- pathview::pathview(
+                    gene.data = gene.data,
+                    cpd.data = cpd.data,
+                    pathway.id = pw.i, specie = organism, 
+                    out.suffix = out.suffix,
+                    keys.align = "y", kegg.native = T, 
+                    kegg.dir = kegg.dir,
+                    key.pos = 'topright',
+                    node.sum = 'max.abs'
+                ),
+                error = function(e) {print(e); print('pw.i')}
+            )
+
+            ## save plot.data.gene and plot.data.cpd
+            ## show only top 3 genes
+            plot.data.gene <- pv.out$plot.data.gene %>%
+                dplyr::left_join(gene.ht, by = c('kegg.names' = 'entrez')) %>%
+                dplyr::rename(entrez = kegg.names) %>%
+                dplyr::mutate(
+                    label_img = (function(x) {
+                        entrez.ids <- stringi::stri_split_fixed(x, ',') %>%
+                            purrr::map_chr((function(y) {
+                                gene.ht %>%
+                                    dplyr::filter(entrez %in% y) %>%
+                                    dplyr::arrange(desc(abs(log2FoldChange))) %>%
+                                    select(label_img) %>%
+                                    unlist %>% 
+                                    (function(x) {
+                                        if (length(x) > 3) {
+                                            x <- x[1:4]
+                                            x[4] <- '...'
+                                        }
+                                        return(paste0(x, collapse = ','))
+                                    })()
+                            }))
+                    })(all.mapped)
+                ) %>%
+                dplyr::filter(
+                    !is.na(ID)
+                )
+            
+            if (nrow(plot.data.gene) > 0) {
+                file.gene <- file.path(out.dir.2, paste(pw.i, out.suffix, 'gene.csv', sep = '.'))
+                if (!file.exists(file.gene)) write.csv(plot.data.gene, file.gene)
+            }
+            
+            plot.data.cpd <- pv.out$plot.data.cpd %>%
+                dplyr::rename(KEGG = kegg.names) %>%
+                dplyr::left_join(cpd.ht, by = c('KEGG')) %>%
+                dplyr::mutate(
+                    label = ifelse(`non-parametric pvalue` < 0.05, '*', '')
+                ) %>%
+                dplyr::filter(
+                    !is.na(Metabolite)
+                )
+            
+            if (nrow(plot.data.cpd) > 0) {
+                file.cpd <- file.path(out.dir.2, paste(pw.i, out.suffix, 'compound.csv', sep = '.'))
+                if (!file.exists(file.cpd)) write.csv(plot.data.cpd, file.cpd)
+            }
+            
+
+            
+            
+            ## move pathway png file to out.dir.1
+            if (file.exists(file.png)) {
+                
+                if (file.rename(file.png, img.file)) {
+                    
+                    if (nrow(plot.data.gene) == 0 & nrow(plot.data.cpd) == 0) {
+                        return(invisible())
+                    }
+                    
+                    ## read png file
+                    img <- png::readPNG(img.file)
+                    
+                    ## output image parameters
+                    width <- ncol(img)
+                    height <- nrow(img)
+                    res <- 100
+                    
+                    ## print the original image first
+                    # tiff(out.file, width = width, height = height, res = res, compression = 'lzw+p')
+                    pdf(out.file, w = width / res, h = height / res)
+                    par(mar = c(0, 0, 0, 0))
+                    plot(c(0, width), c(0, height), type = "n", xlab = "", 
+                         ylab = "", xaxs = "i", yaxs = "i")
+                    rasterImage(img, 0, 0, width, height, interpolate = F)
+                    
+                    if (nrow(plot.data.gene) > 0) {
+                        text(x = plot.data.gene$x, 
+                             y = height - plot.data.gene$y + plot.data.gene$height - 2, 
+                             labels = plot.data.gene$label_img, col = 'blue', 
+                             cex = 0.8)
+                    }
+                    
+                    if (nrow(plot.data.cpd) > 0) {
+                        text(x = plot.data.cpd$x + plot.data.cpd$width, 
+                             y = height - plot.data.cpd$y + plot.data.cpd$height,
+                             labels = plot.data.cpd$label, col = 'red', cex = 0.8)
+                    }
+                    
+                    dev.off()
+                }
+            }
+        })
+    
+    
+    # stopCluster(cl)
+    invisible()
+}
+
+```
+
+## Blood metabolite
+
+```{r, eval=F}
+d10.blood <- XLConnect::readWorksheetFromFile(
+    'data/20201118/2020-006-C-01-I blood statistical format.xlsx',
+    sheet = 'data.csv',
+    rownames = 1,
+    check.names = F
+)[1:12, ]
+
+s10.blood <- XLConnect::readWorksheetFromFile(
+    'data/20201118/2020-006-C-01-I blood statistical format.xlsx',
+    sheet = 'sample.csv',
+    rownames = 1,
+    check.names = F
+) %>%
+    mutate(
+        Group = factor(Group, levels = c('WT', 'A'))
+    )
+
+v10.blood <- XLConnect::readWorksheetFromFile(
+    'data/20201118/2020-006-C-01-I blood statistical format.xlsx',
+    sheet = 'var.csv',
+    rownames = 1,
+    check.names = F
+) %>%
+    filter(
+        `Class total` != 'Class'
+    )
+
+
+## HMDB ID version 4
+d.var <- (v10.blood %>% dplyr::mutate(
+  `Metabolite Name` = rownames(v10.blood),
+  `HMDB ID` = stringi::stri_extract_first_regex(`Database ID`, 'HMDB[0-9]{7}')
+))[, c('Metabolite Name', 'Class', 'Database ID', 'HMDB ID')]
+
+
+## load HMDB database
+hmdb <- read.csv(file.path('../../template/', 'database/HMDB/20190514/hmdb_metabolites.csv'), check.names = F, row.names = 1)
+colnames(hmdb) <- c('HMDB ID', 'HMDB_name', 'HMDB_direct_parent', 'HMDB_class')
+
+d.var <- dplyr::left_join(d.var, hmdb, by = 'HMDB ID')
+
+## retrieve KEGG ID
+tmp <- capture.output(
+  id <- idMap(d.var[, 'Database ID'])
+)
+
+testthat::expect(
+  !any(duplicated(id[!(id[, 'HMDB'] %in% c('', 'NA')), 'HMDB'])),
+  failure_message = 'Duplicated HMDB ID'
+)
+
+d.var <- dplyr::left_join(d.var, data.frame(id), by = c('Database ID' = 'Query'))
+# d.var <- dplyr::left_join(d.var, data.frame(id), by = c('HMDB_v4' = 'HMDB'))
+
+d.var <- lapply(d.var, function(x) {
+  ifelse(is.na(x), '', x)
+}) %>% data.frame(check.names = F)
+
+ht.blood <- hypothesisTest(d10.blood, as.factor(s10.blood$Group))
+
+ht.blood %<>% 
+    as.data.frame() %>%
+    mutate(
+        log2FC = log2(`Fold: A/WT`)
+    )
+
+testthat::expect_equal(
+    rownames(ht.blood),
+    d.var[, 'Metabolite Name']
+)
+# 
+# ht.blood %>%
+#     mutate(
+#         KEGG = d.var$KEGG,
+#         HMDB = d.var$`HMDB ID`
+#     ) %>%
+#     filter(
+#         T
+#     ) %>%
+#     select(
+#         everything()
+#     ) %>%
+#     write.table(
+#         'compound_blood.txt', row.names = T, sep = '\t', quote = F
+#     )
+
+ht.blood %<>%
+    mutate(
+        KEGG = d.var$KEGG,
+        kegg.names = '',
+        HMDB = d.var$`HMDB ID`
+    )
+
+for (i in seq_along(ht.blood$kegg.names)) {
+    if (ht.blood[i, 'KEGG'] != '') {
+        tryCatch(
+            ht.blood[i, 'kegg.names'] <- KEGGREST::keggFind('compound', ht.blood[i, 'KEGG']),
+            error = function(e) {print(e)}
+        )
+    }
+}
+
+local({
+    f <- 'output/110/hypothesis_test_blood.csv'
+    if (!file.exists(f)) {
+        write.csv(ht.blood, f)
+    }
+})
+```
+
+```{r, eval=F}
+cmpd.vec <- unique(ht.blood$KEGG) %>%
+    Filter(function(x) x != '', .)
+
+cmpd.vec[45] <- 'C04741'
+
+plyr::l_ply(cmpd.vec, function(x) {cat(x, '\n')})
+```
+
+```{r, eval=F}
+mSet<-InitDataObjects("conc", "pathora", FALSE)
+# cmpd.vec <- c("C00349","C00157","C09908","C02530","C00846","C17687","C00109","C00399","C00136","C01190","C08788","C17230","C01033","C07632","C04741","C14441","C07185","C04554","C07635","C14831","C05849","C02504","C00535","C06423","C12989","C05455","C00376","C00427","C06439","C00334","C02939","C00356","C02593","C01949","C05565","C00858","C15610","C02744","C04737","C16218","C00882","C08363","C16678","C00410","C15786","C04272","C04411","C06573","C01907","C07369","C03205","C01089","C14809","C02360","C08278","C15915","C01933","C03665","C06255","C09727","C01780","C02406","C04373","C06135","C05672","C17647","C14717","C01164","C17438","C01571","C17664","C01953","C02528","C04661","C00249")
+mSet<-Setup.MapData(mSet, cmpd.vec);
+mSet<-CrossReferencing(mSet, "kegg");
+mSet<-CreateMappingResultTable(mSet)
+# mSet<-PerformDetailMatch(mSet, "C12989");
+# mSet<-GetCandidateList(mSet);
+mSet<-SetKEGG.PathLib(mSet, "mmu", "current")
+mSet<-SetMetabolomeFilter(mSet, F);
+mSet<-CalculateOraScore(mSet, "rbc", "hyperg")
+```
+
+
+### Metabolic pathways
+
+Obtained metabolic pathways hit by the metabolites using MetPA.
+
+```{r}
+load('RData/blood.RData')
+
+pathways <- KEGGREST::keggList('pathway', 'mmu')
+
+d.pathways.blood <- purrr::imap(pathways, function(x, y) {
+    c(substr(y, 6, 13),
+      stringi::stri_replace_all_fixed(x, ' - Mus musculus (mouse)', '')
+    )
+}) %>% 
+    do.call(rbind, .) %>%
+    as.data.frame %>%
+    magrittr::set_colnames(c('code', 'pathway_name')) %>%
+    dplyr::right_join(
+        mSet$analSet$ora.mat %>% tibble::rownames_to_column('pathway_name'),
+        by = 'pathway_name'
+    )
+
+if (!dir.exists('RData')) {
+    dir.create('RData')
+}
+if (!file.exists('RData/blood.RData')) {
+    save(ht.blood, d.pathways.blood, mSet, file = 'RData/blood.RData')
+}
+    
+
+local({
+    f <- 'output/110/blood_metabolites_pathways.csv'
+    if (!file.exists(f)) {
+        write.csv(d.pathways.blood, f)
+    }
+})
+
+```
+
+```{r}
+library(pathview)
+
+cpd.ht <- ht.blood %>%
+    tibble::rownames_to_column('Metabolite')
+
+gene.ht <- d10.entrez %>%
+    tibble::rownames_to_column('entrez')
+
+pathways.blood <- structure(d.pathways.blood$code,
+                            names = d.pathways.blood$pathway_name)
+
+pathviewWrap(gene.ht, cpd.ht, pathways = pathways.blood, organism = 'mmu',
+             out.suffix = 'blood', 
+             kegg.dir = 'output/110/kegg',
+             out.dir.1 = 'output/110/pathview_blood',
+             out.dir.2 = 'output/110/pathview_blood_annotate')
+
+gene.summary <- lapply(
+    list.files('output/110/pathview_blood_annotate', '*.gene.csv', full.names = T),
+    function(f) {
+        d <- read.csv(f)
+        
+        pathway.code <- fs::path_file(f) %>% 
+            stringi::stri_split_fixed('.', simplify = T) %>%
+            `[`(1,1)
+        
+        gene.ht %>%
+            dplyr::filter(
+                entrez %in% 
+                    (stringi::stri_split_fixed(d$all.mapped, ',') %>%
+                    do.call(c, .) %>%
+                    unique)
+            ) %>% 
+            dplyr::group_by(
+                direction = ifelse(
+                    padj < 0.05,
+                    ifelse(log2FoldChange < 0, 'down', 'up'),
+                    'nonsig')
+            ) %>%
+            dplyr::summarise(
+                n = n(),
+                names = paste(sprintf('%s(%s)', ID, entrez), collapse = ','),
+                .groups = 'drop'
+            ) %>%
+            dplyr::mutate(
+                pathway = pathway.code,
+                type = 'gene'
+            ) %>%
+            dplyr::select(
+                pathway, type, direction, n, names
+            )
+    }) %>%
+    do.call(rbind, .)
+
+cpd.summary <- lapply(
+    list.files('output/110/pathview_blood_annotate', '*.compound.csv', full.names = T),
+    function(f) {
+        d <- read.csv(f, check.names = F, row.names = 1)
+        
+        pathway.code <- fs::path_file(f) %>% 
+            stringi::stri_split_fixed('.', simplify = T) %>%
+            `[`(1,1)
+        
+        d %>%
+            dplyr::group_by(
+                direction = ifelse(
+                    `non-parametric pvalue` < 0.05,
+                    ifelse(`Fold: A/WT` < 1, 'down', 'up'),
+                    'nonsig')
+            ) %>%
+            dplyr::summarise(
+                n = n(),
+                names = paste(sprintf('%s(%s; %s)', Metabolite, KEGG, kegg.names), collapse = ','),
+                .groups = 'drop'
+            ) %>%
+            dplyr::mutate(
+                pathway = pathway.code,
+                type = 'compound'
+            ) %>%
+            dplyr::select(
+                pathway, type, direction, n, names
+            )
+    }) %>%
+    do.call(rbind, .)
+
+gene.cpd.summary <- rbind(gene.summary, cpd.summary) %>%
+    as.data.frame %>%
+    dplyr::arrange(pathway, type, direction)
+
+local({
+    f <- 'output/110/blood_pathway_summary.xlsx'
+    if (!file.exists(f)) {
+        XLConnect::writeWorksheetToFile(f, gene.cpd.summary, sheet = 'summary')
+    }
+})
+
+
+```
+
+## Liver metabolite
+
+```{r}
+d10.liver <- XLConnect::readWorksheetFromFile(
+    'data/20201118/2020-006-C-01-I liver statistical format.xlsx',
+    sheet = 'data.csv',
+    rownames = 1,
+    check.names = F
+)[1:16, ]
+
+s10.liver <- XLConnect::readWorksheetFromFile(
+    'data/20201118/2020-006-C-01-I liver statistical format.xlsx',
+    sheet = 'sample.csv',
+    rownames = 1,
+    check.names = F
+) %>%
+    mutate(
+        Group = factor(Group, levels = c('WT', 'A'))
+    )
+
+
+v10.liver <- XLConnect::readWorksheetFromFile(
+    'data/20201118/2020-006-C-01-I liver statistical format.xlsx',
+    sheet = 'var.csv',
+    rownames = 1,
+    check.names = F
+) %>%
+    filter(
+        `Class total` != 'Class'
+    )
+
+
+## HMDB ID version 4
+d.var <- (v10.liver %>% dplyr::mutate(
+  `Metabolite Name` = rownames(v10.liver),
+  `HMDB ID` = stringi::stri_extract_first_regex(`Database ID`, 'HMDB[0-9]{7}')
+))[, c('Metabolite Name', 'Class', 'Database ID', 'HMDB ID')]
+
+
+## load HMDB database
+hmdb <- read.csv(file.path('../../template/', 'database/HMDB/20190514/hmdb_metabolites.csv'), check.names = F, row.names = 1)
+
+# hmdb <- read.csv(file.path('../../template/', hmdb_db$file), check.names = F, row.names = 1)
+colnames(hmdb) <- c('HMDB ID', 'HMDB_name', 'HMDB_direct_parent', 'HMDB_class')
+
+d.var <- dplyr::left_join(d.var, hmdb, by = 'HMDB ID')
+
+## retrieve KEGG ID
+tmp <- capture.output(
+  id <- idMap(d.var[, 'Database ID'])
+)
+
+testthat::expect(
+  !any(duplicated(id[!(id[, 'HMDB'] %in% c('', 'NA')), 'HMDB'])),
+  failure_message = 'Duplicated HMDB ID'
+)
+
+d.var <- dplyr::left_join(d.var, data.frame(id), by = c('Database ID' = 'Query'))
+# d.var <- dplyr::left_join(d.var, data.frame(id), by = c('HMDB_v4' = 'HMDB'))
+
+d.var <- lapply(d.var, function(x) {
+  ifelse(is.na(x), '', x)
+}) %>% data.frame(check.names = F)
+
+ht.liver <- hypothesisTest(d10.liver, as.factor(s10.liver$Group))
+
+ht.liver %<>% 
+    as.data.frame() %>%
+    mutate(
+        log2FC = log2(`Fold: A/WT`)
+    )
+
+testthat::expect_equal(
+    rownames(ht.liver),
+    d.var[, 'Metabolite Name']
+)
+
+ht.liver %<>%
+    mutate(
+        KEGG = d.var$KEGG,
+        kegg.names = '',
+        HMDB = d.var$`HMDB ID`
+    )
+
+for (i in seq_along(ht.liver$kegg.names)) {
+    if (ht.liver[i, 'KEGG'] != '') {
+        tryCatch(
+            ht.liver[i, 'kegg.names'] <- KEGGREST::keggFind('compound', ht.liver[i, 'KEGG']),
+            error = function(e) {print(e)}
+        )
+    }
+}
+
+
+local({
+    f <- 'output/110/hypothesis_test_liver.csv'
+    if (!file.exists(f)) {
+        write.csv(ht.liver, f)
+    }
+})
+```
+
+
+```{r}
+cmpd.vec <- unique(ht.liver$KEGG) %>%
+    Filter(function(x) x != '', .)
+
+plyr::l_ply(cmpd.vec, function(x) {cat(paste0('"', x, '", '))})
+```
+
+```{r}
+mSet<-InitDataObjects("conc", "pathora", FALSE)
+cmpd.vec <- c("C02862", "C02571", "C02838", "C02990", "C03017", "C07471", "C00864", "C00836", "C01152", "C01157", "C00643", "C00719", "C00327", "C00037", "C00651", "C00041", "C00062", "C00152", "C00049", "C00064", "C00135", "C00407", "C00123", "C00047", "C00073", "C00079", "C00188", "C00078", "C00082", "C00183", "C02989", "C00437", "C03793", "C01042", "C03145", "C00077", "C00127", "C00408", "C10172", "C01879", "C00213", "C03626", "C00245", "C01179", "C21298", "C00108", "C00587", "C01586", "C00695", "C01921", "C05465", "C05122", "C15497", "C02781", "C00878", "C08349", "C00191", "C00257", "C19910", "C00158", "C00122", "C00489", "C00311", "C00042", "C20827", "C06427", "C06429", "C02678", "C01595", "C00712", "C00249", "C08362", "C14762", "C04230", "C01233", "C01089", "C05984", "C02630", "C01991", "C03547", "C00256", "C00149", "C01551", "C08493", "C05635", "C02043", "C00109", "C00233", "C00322", "C00026", "C00022", "C07338", "C01367", "C02067", "C00346", "C02180", "C00328", "C00633", "C05607", "C03672", "C01120", "C06124", "C02494", "C04545", "C00294", "C00144", "C00130", "C04152", "C00262", "C07599", "C00366", "C00385", "C00847", "C05842", "C00153", "C00299", "C00043", "C01762", "C00178", "C00106", "C01996", "C00114", "C00318", "C11135")
+mSet<-Setup.MapData(mSet, cmpd.vec);
+mSet<-CrossReferencing(mSet, "kegg");
+mSet<-CreateMappingResultTable(mSet)
+# mSet<-PerformDetailMatch(mSet, "C12989");
+# mSet<-GetCandidateList(mSet);
+mSet<-SetKEGG.PathLib(mSet, "mmu", "current")
+mSet<-SetMetabolomeFilter(mSet, F);
+mSet<-CalculateOraScore(mSet, "rbc", "hyperg")
+```
+
+node.sum = 'max.abs'
+
+### Metabolic pathways
+
+Obtained metabolic pathways hit by the metabolites using MetPA.
+
+```{r}
+load('RData/liver.RData')
+
+pathways <- KEGGREST::keggList('pathway', 'mmu')
+
+d.pathways.liver <- purrr::imap(pathways, function(x, y) {
+    c(substr(y, 6, 13),
+      stringi::stri_replace_all_fixed(x, ' - Mus musculus (mouse)', '')
+    )
+}) %>% 
+    do.call(rbind, .) %>%
+    as.data.frame %>%
+    magrittr::set_colnames(c('code', 'pathway_name')) %>%
+    dplyr::right_join(
+        mSet$analSet$ora.mat %>% tibble::rownames_to_column('pathway_name'),
+        by = 'pathway_name'
+    )
+
+if (!dir.exists('RData')) {
+    dir.create('RData')
+}
+if (!file.exists('RData/liver.RData')) {
+    save(ht.liver, d.pathways.liver, mSet, file = 'RData/liver.RData')
+}
+    
+
+local({
+    f <- 'output/110/liver_metabolites_pathways.csv'
+    if (!file.exists(f)) {
+        write.csv(d.pathways.liver, f)
+    }
+})
+
+```
+
+```{r}
+library(pathview)
+
+cpd.ht <- ht.liver %>%
+    tibble::rownames_to_column('Metabolite')
+
+gene.ht <- d10.entrez %>%
+    tibble::rownames_to_column('entrez')
+
+pathways.liver <- structure(d.pathways.liver$code,
+                            names = d.pathways.liver$pathway_name)
+
+pathviewWrap(gene.ht, cpd.ht, pathways = pathways.liver, organism = 'mmu',
+             out.suffix = 'liver', 
+             kegg.dir = 'output/110/kegg',
+             out.dir.1 = 'output/110/pathview_liver',
+             out.dir.2 = 'output/110/pathview_liver_annotate')
+
+gene.summary <- lapply(
+    list.files('output/110/pathview_liver_annotate', '*.gene.csv', full.names = T),
+    function(f) {
+        d <- read.csv(f)
+        
+        pathway.code <- fs::path_file(f) %>% 
+            stringi::stri_split_fixed('.', simplify = T) %>%
+            `[`(1,1)
+        
+        gene.ht %>%
+            dplyr::filter(
+                entrez %in% 
+                    (stringi::stri_split_fixed(d$all.mapped, ',') %>%
+                    do.call(c, .) %>%
+                    unique)
+            ) %>% 
+            dplyr::group_by(
+                direction = ifelse(
+                    padj < 0.05,
+                    ifelse(log2FoldChange < 0, 'down', 'up'),
+                    'nonsig')
+            ) %>%
+            dplyr::summarise(
+                n = n(),
+                names = paste(sprintf('%s(%s)', ID, entrez), collapse = ','),
+                .groups = 'drop'
+            ) %>%
+            dplyr::mutate(
+                pathway = pathway.code,
+                type = 'gene'
+            ) %>%
+            dplyr::select(
+                pathway, type, direction, n, names
+            )
+    }) %>%
+    do.call(rbind, .)
+
+cpd.summary <- lapply(
+    list.files('output/110/pathview_liver_annotate', '*.compound.csv', full.names = T),
+    function(f) {
+        d <- read.csv(f, check.names = F, row.names = 1)
+        
+        pathway.code <- fs::path_file(f) %>% 
+            stringi::stri_split_fixed('.', simplify = T) %>%
+            `[`(1,1)
+        
+        d %>%
+            dplyr::group_by(
+                direction = ifelse(
+                    `non-parametric pvalue` < 0.05,
+                    ifelse(`Fold: A/WT` < 1, 'down', 'up'),
+                    'nonsig')
+            ) %>%
+            dplyr::summarise(
+                n = n(),
+                names = paste(sprintf('%s(%s; %s)', Metabolite, KEGG, kegg.names), collapse = ','),
+                .groups = 'drop'
+            ) %>%
+            dplyr::mutate(
+                pathway = pathway.code,
+                type = 'compound'
+            ) %>%
+            dplyr::select(
+                pathway, type, direction, n, names
+            )
+    }) %>%
+    do.call(rbind, .)
+
+gene.cpd.summary <- rbind(gene.summary, cpd.summary) %>%
+    as.data.frame %>%
+    dplyr::arrange(pathway, type, direction)
+
+local({
+    f <- 'output/110/liver_pathway_summary.xlsx'
+    if (!file.exists(f)) {
+        XLConnect::writeWorksheetToFile(f, gene.cpd.summary, sheet = 'summary')
+    }
+})
+
+
+```
+
+
+
+
+## jointpa
+
+```{r}
+mSet<-InitDataObjects("conc", "pathinteg", FALSE)
+
+mSet<-SetOrganism(mSet, "hsa")
+
+geneListFile<-"replace_with_your_file_name"
+
+geneList<-readChar(geneListFile, file.info(geneListFile)$size)
+
+mSet<-PerformIntegGeneMapping(mSet, geneList, "hsa", "symbol");
+
+cmpdListFile<-"replace_with_your_file_name"
+
+cmpdList<-readChar(cmpdListFile, file.info(cmpdListFile)$size)
+
+mSet<-PerformIntegCmpdMapping(mSet, cmpdList, "hsa", "kegg");
+
+mSet<-CreateMappingResultTable(mSet)
+
+mSet<-PrepareIntegData(mSet);
+
+mSet<-PerformIntegPathwayAnalysis(mSet, "dc", "hyper", "integ", "query");
+
+mSet<-PlotPathSummary(mSet, F, "path_view_0_", "png", 72, width=NA)
+
+mSet<-CreateIntegMatchingTable(mSet);
+
+mSet<-SaveTransformedData(mSet)
+```
+
+
+

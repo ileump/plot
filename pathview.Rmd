@@ -1,0 +1,161 @@
+---
+title: "pathview"
+author: "leump"
+date: "3/27/2021"
+output: html_document
+---
+
+```{r setup, include=F, echo=F, message=F, warnings=F}
+source('Rscript/setup.R')
+source('Rscript/functions.R')
+source('Rscript/app_functions.R')
+# source('rscript/pathway_funs.R', encoding = 'UTF-8')
+
+
+options(useFancyQuotes = FALSE)
+options(java.parameters = '-Xmx8000m')
+
+knitr::opts_chunk$set(
+  cache = T,
+  message = F,
+  dpi = 300
+)
+
+library(plyr)
+library(ggplot2)
+library(magrittr)
+library(kableExtra)
+library(dplyr)
+library(patchwork)
+
+# library(extrafont)
+# loadfonts(device = 'win', quiet = T)
+# par(family = 'Liberation')
+# windowsFonts(
+#   serif = 'Liberation Serif',
+#   sans = 'Liberation Sans',
+#   mono = 'Liberation Mono'
+# )
+
+par(family = 'sans')
+font_family <- 'sans'
+
+set.seed(1)
+
+# Sys.setlocale("LC_ALL","Chinese")
+output.dir <- 'output/pathview/'
+if (!dir.exists(output.dir)) {
+    dir.create(output.dir, recursive = T)
+}
+```
+
+
+```{r pathview}
+rm(list=ls())
+suppressMessages(library(RCurl))
+suppressMessages(library(rvest))
+library(downloader)
+library(stringr)
+library(magrittr)
+library(RJSONIO)
+library(readr)
+args <- commandArgs(T)
+path <- as.character(args[1])
+# setwd(path)
+print(path)
+###------
+#关于物种后期可以考虑在详细加
+###------
+kegg_file <- read.table("data/pathview/kegg.csv",
+                        header=T,sep=",",fill=TRUE,quote = "",encoding='UTF-8',check.names=F,stringsAsFactors = FALSE)
+colnames(kegg_file) = c("Map_ID","Cpd_ID","Map_color","Describe","Map_url")
+
+map_ids <- unique(kegg_file[which(kegg_file["Map_ID"]!=""),"Map_ID"])
+rname <- c("Map_ID","Cpd_ID","Describe","Num_cpd","Url","Html_Url")
+result <- as.data.frame(matrix(numeric(0),ncol=6))
+colnames(result) <- rname
+for (i in 1:length(map_ids)){
+  ap <- kegg_file[kegg_file["Map_ID"]==as.character(map_ids[i]),]
+  mapid <- as.character(map_ids[i])
+  myurl <- paste0("https://www.kegg.jp/kegg-bin/show_pathway?",mapid,"+",str_c(ap[,2],"%09",ap[,3],collapse = "+"))
+  hturl <- paste0("https://www.kegg.jp/kegg-bin/show_pathway?",mapid,"+",str_c(ap[,2],collapse = "+"))
+  m2aq <- data.frame(mapid,str_c(ap[,2],collapse = "|"),str_c(ap[,4],collapse = "|"),length(unique(ap[,2])),myurl,hturl,stringsAsFactors=FALSE,check.names=F)
+  result <- rbind(result,m2aq)
+}
+colnames(result) <- rname
+
+
+get_map <- function(x){
+  for(i in 1:nrow(x)){
+    if (paste0('output/pathview/', x$Map_ID[i], ".png") %in% list.files(pattern = ".png") & paste0(x$Map_ID[i], ".html") %in% list.files(pattern = ".html")){
+      next
+    }else{
+      pathway_id <- x$Map_ID[i]
+      url <- x$Url[i]
+      hturl <- x$Html_Url[i]
+      pic <- try(read_html(url) %>% html_nodes("img") %>% extract2(2) %>% html_attr("src"), silent = T)
+      error <- 1
+      while (class(pic) == "try-error"){
+        if (error > 20){
+          stop(paste0(url, " read_html error !!!"))
+        }
+        Sys.sleep(2)
+        pic <- try(read_html(url) %>% html_nodes("img") %>% extract2(2) %>% html_attr("src"), silent = T)
+        error <- error + 1
+      } 
+      info <- try(download(paste0("https://www.kegg.jp", pic), paste0('output/pathview/', pathway_id, ".png"), mode = "wb"), silent = T)
+      error <- 1
+      while (class(info) == "try-error"){
+        if (error > 20){
+          stop(paste0(url, " download error !!!"))
+        }
+        Sys.sleep(2)
+        info <- try(download(paste0("https://www.kegg.jp", pic), paste0('output/pathview/', pathway_id, ".png"), mode = "wb"), silent = T)
+        error <- error + 1
+      }
+      
+      ##获取网页Html文件
+      result_html <- try(read_html(hturl),silent=T)
+      num <- 1
+      while (!class(result_html)[1] == "xml_document") {
+        result_html <- try(read_xml(url), silent = T)
+        if(num == 3){
+          print(paste0("please check map ",x$Map_ID[i]))
+          break()
+        }
+      }
+      res_list <- result_html %>% html_nodes("area")
+      res <- plyr::llply(res_list, function(y){
+        shape <- html_attr(y, "shape")
+        coords <- html_attr(y, "coords")
+        title <- html_attr(y, "title")
+        href <- paste0("http://www.kegg.jp", html_attr(y, "href"))
+        keggid <- strsplit(strsplit(href, "\\?")[[1]][2], "\\+")[[1]]
+        info <- list()
+        file_keggid <- strsplit(x$Cpd_ID[i], "\\|")[[1]]
+        if (any(file_keggid %in% keggid)){
+          pro_down_ids <- file_keggid[file_keggid %in% keggid]
+          for(j in 1:length(pro_down_ids)){
+            metaid2keggid <- pro_down_ids[j]
+            metaid2information <- x$Describe
+            info <- dplyr::combine(info, list(c(list(title = metaid2keggid), list(subTitle = "Describe"), list(text = metaid2information))))
+          }
+        }
+        if (length(info) == 0){
+          list(shape = shape, coords = coords, href = href, title = title)
+        }else{
+          list(shape = shape, coords = coords, href = href, title = title, info = info)
+        }
+      })
+      dd <- toJSON(res)
+      content <- read_lines(file = "output/pathview/template.html")
+      json <- paste0("var imageList = ", dd)
+      content <- sub("pathway_id", x$Map_ID[i], content)
+      content <- sub("js_local", json, content) 
+      write_lines(content, path = paste0('output/pathview/', x$Map_ID[i], ".html"))
+    }
+  }
+}
+get_map(result) 
+```
+

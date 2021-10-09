@@ -1,0 +1,129 @@
+# 110 lipids
+
+
+
+```{r, include=F, echo=F, message=F, warnings=F}
+options(java.parameters = '-Xmx8000m')
+source('Rscript/setup.R')
+source('Rscript/functions.R')
+source('Rscript/app_functions.R')
+source('rscript/pathway_funs.R', encoding = 'UTF-8')
+
+
+options(useFancyQuotes = FALSE)
+
+
+knitr::opts_chunk$set(
+  cache = T,
+  message = F,
+  dpi = 300
+)
+
+library(plyr)
+library(ggplot2)
+library(magrittr)
+# library(MetaboAnalystR)
+library(kableExtra)
+library(dplyr)
+
+
+library(extrafont)
+loadfonts(device = 'win', quiet = T)
+par(family = 'Liberation')
+windowsFonts(
+  serif = 'Liberation Serif',
+  sans = 'Liberation Sans',
+  mono = 'Liberation Mono'
+)
+
+par(family = 'sans')
+
+set.seed(1)
+
+prefix <- 'Upset'
+output.dir <- file.path('output', prefix)
+Sys.setlocale("LC_ALL","Chinese")
+
+if (!dir.exists(output.dir)) {
+    dir.create(output.dir, recursive = T)
+}
+```
+
+```{r}
+ht10 <- read.csv(
+  '/Users/leump/Desktop/Metabolome_workflow/data_test/B.csv',
+  row.names = 1,
+  check.names = F
+)
+
+ht20 <- read.csv(
+  '/Users/leump/Desktop/Metabolome_workflow/data_test/C.csv',
+  row.names = 1,
+  check.names = F
+)
+
+```
+
+```{r}
+## 574
+d10 <- ht10 %>%
+  mutate(
+    rn = rownames(ht10),
+    `N/BCD` = ifelse(`parametric pvalue` < 0.05, 1, 0)
+  ) %>%
+  select(
+    rn:last_col()
+  )
+
+## 571
+d20 <- ht20 %>%
+  mutate(
+    rn = rownames(ht20),
+    `BCD-young/BCD-old` = ifelse(`Dunn: BCD-young:BCD-old` < 0.05, 1, 0),
+    `WT/BCD-old` = ifelse(`Dunn: WT:BCD-old` < 0.05, 1, 0),
+    `WT/BCD-young` = ifelse(`Dunn: WT:BCD-young` < 0.05, 1, 0)
+  ) %>%
+  select(
+    rn:last_col()
+  )
+
+## 751
+d <- dplyr::full_join(d10, d20, by = 'rn') %>%
+  mutate(
+    across(`N/BCD`:`WT/BCD-young`, zoo::na.fill, 0)
+  )
+
+
+ht.res <- dplyr::full_join(
+  ht10 %>% tibble::rownames_to_column('rn'),
+  ht20 %>% tibble::rownames_to_column('rn'),
+  by = 'rn'
+)
+
+if (FALSE) {
+  cbind(ht.res, d) %>%
+    write.csv('output/110/hypothesis_test_combined.csv')
+}
+
+```
+
+```{r}
+library(UpSetR)
+prefix <- 'Upset'
+output.dir <- file.path('output', prefix)
+file.pdf <- file.path(output.dir, 'upset.pdf')
+
+if (!file.exists(file.pdf)) {
+  cairo_pdf(file.pdf, width = 6, height = 4, family = 'sans')
+  upset(
+    d,
+    keep.order = T,
+    order.by = c('degree'),
+    decreasing = c(F)
+  ) %>% print
+  dev.off()
+}
+
+
+```
+

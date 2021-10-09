@@ -1,0 +1,592 @@
+# 110 lipids
+
+
+```{r, include=F, echo=F, message=F, warnings=F}
+options(java.parameters = '-Xmx8000m')
+source('Rscript/setup.R')
+source('Rscript/functions.R')
+source('Rscript/app_functions.R')
+source('rscript/pathway_funs.R', encoding = 'UTF-8')
+
+
+options(useFancyQuotes = FALSE)
+
+
+knitr::opts_chunk$set(
+  cache = T,
+  message = F,
+  dpi = 300
+)
+
+library(plyr)
+library(ggplot2)
+library(magrittr)
+library(MetaboAnalystR)
+library(kableExtra)
+
+
+# library(extrafont)
+# loadfonts(device = 'win', quiet = T)
+# par(family = 'Liberation')
+# windowsFonts(
+#   serif = 'Liberation Serif',
+#   sans = 'Liberation Sans',
+#   mono = 'Liberation Mono'
+# )
+
+par(family = 'sans')
+
+set.seed(1)
+
+prefix <- '110'
+output.dir <- file.path('output', prefix)
+Sys.setlocale("LC_ALL","Chinese")
+
+if (!dir.exists(output.dir)) {
+    dir.create(output.dir, recursive = T)
+}
+```
+
+```{r}
+d10 <- XLConnect::readWorksheetFromFile(
+  # 'data/20210401/2021-180-C-01 MS data-Statistical format.xlsx',
+  '/Users/leump/Desktop/1.xlsx',
+  sheet = 'data.csv',
+  check.names = F,
+  rownames = 1
+)[1:80, ]
+
+d10[d10 == 0] <- 0.5 * min(d10[d10 > 0])
+
+d10.log2 <- log2(d10)
+
+ds10 <- data.frame(
+  sample = rownames(d10)
+) %>%
+  mutate(
+    subject = stringi::stri_sub(sample, 1, 1) %>% factor,
+    timepoint = stringi::stri_sub(sample, 3, 3) %>% factor,
+    group = stringi::stri_sub(sample, 2, 2) %>% factor(levels = c('N', 'T'))
+  )
+
+
+
+```
+
+## 方法说明
+
+此实验为被试内设计(within-subjects design)，每名患者的两种组织在8个时间点检测了代谢物水平，实验目的是比较两种组织，还有相同组织在不同时间点的代谢物差异。这两种比较都是个体内（within subjects）的比较，我们把患者当做随机效应（random effect）处理，用limma包的duplicateCorrelation函数来实现。为了比较的方便，把组织的种类和时间点当做了双因子实验来处理，没有采用时间序列的处理方式。
+
+limma分析之前对代谢物数值做了log2转换，limma差异分析的结果在single文件夹中的csv文件。每两组对比的差异分析结果放在一个csv中，比如T1.T - T1.N.csv就是第一个时间点肿瘤和正常组织对比的结果，而((T2.T + T3.T + T4.T) - (T2.N + T3.N + T4.N)) div 3.csv是第二时间段肿瘤组织和正常组织的差异分析结果。这里div 3表示除以3，是因为是把3个组的均值作比较，所以把总和除以3。
+
+差异分析的结果包括:
+- logFC： log2 fold change。
+- AveExpr： 所有样本的均值(log2)。
+- t： moderated t statistic。含义和普通的t test statistic类似，但是标准误差(standard error)是利用贝叶斯模型向一个所有代谢物共同的数值进行了收敛。
+- P.Value：P value
+- adj.P.Val：BH 方法校正P值得到的FDR
+- B: log-odds that the gene is differentially expressed
+
+heatmap_summary.pdf是把所有的logFC放在一起的热图，对行进行了分层聚类。
+heatmap_summary_FDRlt0.1.pdf是筛选出FDR<0.1的部分，把其它的logFC数值设为0，为了方便查看其中有显著差异的部分。
+
+参考：
+limma user guide, http://bioconductor.org/packages/release/bioc/vignettes/limma/inst/doc/usersguide.pdf
+
+## Limma
+
+
+Design matrix columns for different parameterization
+
+|single.factor |nested |interaction |
+|:-------------|:------|:-----------|
+|T1.N          |T1     |T1          |
+|T2.N          |T2     |T2          |
+|T3.N          |T3     |T3          |
+|T4.N          |T4     |T4          |
+|T5.N          |T5     |T5          |
+|T6.N          |T6     |T6          |
+|T7.N          |T7     |T7          |
+|T8.N          |T8     |T8          |
+|T1.T          |T1.T   |T           |
+|T2.T          |T2.T   |T2.T        |
+|T3.T          |T3.T   |T3.T        |
+|T4.T          |T4.T   |T4.T        |
+|T5.T          |T5.T   |T5.T        |
+|T6.T          |T6.T   |T6.T        |
+|T7.T          |T7.T   |T7.T        |
+|T8.T          |T8.T   |T8.T        |
+
+Rename factors
+
+|single.factor |nested |interaction |
+|:-------------|:------|:-----------|
+|T1.N          |T1.N   |T1.N        |
+|T2.N          |T2.N   |T2.N        |
+|T3.N          |T3.N   |T3.N        |
+|T4.N          |T4.N   |T4.N        |
+|T5.N          |T5.N   |T5.N        |
+|T6.N          |T6.N   |T6.N        |
+|T7.N          |T7.N   |T7.N        |
+|T8.N          |T8.N   |T8.N        |
+|T1.T          |T1.T   |T1.T        |
+|T2.T          |T2.T   |T2.T        |
+|T3.T          |T3.T   |T3.T        |
+|T4.T          |T4.T   |T4.T        |
+|T5.T          |T5.T   |T5.T        |
+|T6.T          |T6.T   |T6.T        |
+|T7.T          |T7.T   |T7.T        |
+|T8.T          |T8.T   |T8.T        |
+
+
+```{r}
+timepoint <- paste0('T', ds10$timepoint)
+group <- ds10$group
+
+##------------------
+## single factor
+##------------------
+timepoint.group <- paste(timepoint, group, sep = '.') 
+design.single <- model.matrix(~0 + timepoint.group)
+colnames(design.single) %<>% stringi::stri_replace_all_fixed('timepoint.group', '')
+
+## multilevel
+corfit <- duplicateCorrelation(t(d10.log2),design.single, block=ds10$subject)
+
+fit.single <- limma::lmFit(
+  t(d10.log2), 
+  design.single,
+  block = ds10$subject,
+  correlation = corfit$consensus.correlation
+)
+
+# fit2.single <- vapply(1:8, function(i) {
+#   sprintf('T%d.T - T%d.N', i, i)
+# }, character(1)) %>%
+#   as.list %>%
+#   c(list(levels = design.single)) %>%
+#   do.call(makeContrasts, .) %>%
+#   contrasts.fit(fit, .) %>%
+#   eBayes
+
+fit2.single <- makeContrasts(
+  # # 对比组一：肿瘤与正常对比
+  # 'T1.T - T1.N', 'T2.T - T2.N', 'T3.T - T3.N', 'T4.T - T4.N',
+  # 'T5.T - T5.N', 'T6.T - T6.N', 'T7.T - T7.N', 'T8.T - T8.N',
+  # # 第二时间段肿瘤与正常对比（小组2,3,4）
+  # '((T2.T + T3.T + T4.T) - (T2.N + T3.N + T4.N))/3',
+  # # 第三时间段肿瘤与正常对比（小组5,6,7）
+  # '((T5.T + T6.T + T7.T) - (T5.N + T6.N + T7.N))/3',
+  # # 肿瘤组织处理时间梯度对比
+  # 'T2.T - T1.T', 'T3.T - T1.T', 'T4.T - T1.T', 'T5.T - T1.T', 'T6.T - T1.T', 'T7.T - T1.T', 'T8.T - T1.T',
+  # 'T3.T - T2.T', 'T4.T - T2.T', 'T5.T - T2.T', 'T6.T - T2.T', 'T7.T - T2.T', 'T8.T - T2.T',
+  # 'T4.T - T3.T', 'T5.T - T3.T', 'T6.T - T3.T', 'T7.T - T3.T', 'T8.T - T3.T',
+  # 'T5.T - T4.T', 'T6.T - T4.T', 'T7.T - T4.T', 'T8.T - T4.T',
+  # 'T6.T - T5.T', 'T7.T - T5.T', 'T8.T - T5.T',
+  # 'T7.T - T6.T', 'T8.T - T6.T',
+  # 'T8.T - T7.T',
+  # # 正常组织处理时间梯度对比
+  # 'T2.N - T1.N', 'T3.N - T1.N', 'T4.N - T1.N', 'T5.N - T1.N', 'T6.N - T1.N', 'T7.N - T1.N', 'T8.N - T1.N',
+  # 'T3.N - T2.N', 'T4.N - T2.N', 'T5.N - T2.N', 'T6.N - T2.N', 'T7.N - T2.N', 'T8.N - T2.N',
+  # 'T4.N - T3.N', 'T5.N - T3.N', 'T6.N - T3.N', 'T7.N - T3.N', 'T8.N - T3.N',
+  # 'T5.N - T4.N', 'T6.N - T4.N', 'T7.N - T4.N', 'T8.N - T4.N',
+  # 'T6.N - T5.N', 'T7.N - T5.N', 'T8.N - T5.N',
+  # 'T7.N - T6.N', 'T8.N - T6.N',
+  # 'T8.N - T7.N',
+  
+  # 肿瘤组织处理时间梯度对比
+  'T2.T - T1.T',
+  'T3.T - T2.T',
+  'T4.T - T3.T',
+  'T5.T - T4.T',
+  'T6.T - T5.T',
+  'T7.T - T6.T',
+  'T8.T - T7.T',
+  # 正常组织处理时间梯度对比
+  'T2.N - T1.N',
+  'T3.N - T2.N',
+  'T4.N - T3.N',
+  'T5.N - T4.N', 
+  'T6.N - T5.N',
+  'T7.N - T6.N',
+  'T8.N - T7.N',
+  
+  
+  
+  
+  
+  
+  
+  
+  levels = design.single
+) %>%
+  contrasts.fit(fit.single, contrasts = .) %>%
+  eBayes
+
+##------------------
+## single factor reorder levels
+##------------------
+timepoint.group <- paste(timepoint, group, sep = '.') %>%
+  factor(levels = paste0('T', 1:8, '.', rep(c('N', 'T'), each = 8)))
+design.single2 <- model.matrix(~ 0+timepoint.group)
+colnames(design.single2) %<>% stringi::stri_replace_all_fixed('timepoint.group', '')
+
+## multilevel
+corfit <- duplicateCorrelation(t(d10.log2),design.single2, block=ds10$subject)
+
+fit.single2 <- limma::lmFit(
+  t(d10.log2), 
+  design.single2,
+  block = ds10$subject,
+  correlation = corfit$consensus.correlation
+)
+
+# fit2.single <- vapply(1:8, function(i) {
+#   sprintf('T%d.T - T%d.N', i, i)
+# }, character(1)) %>%
+#   as.list %>%
+#   c(list(levels = design.single)) %>%
+#   do.call(makeContrasts, .) %>%
+#   contrasts.fit(fit, .) %>%
+#   eBayes
+
+fit2.single2 <- makeContrasts(
+  # 对比组一：肿瘤与正常对比
+  'T1.T - T1.N', 'T2.T - T2.N', 'T3.T - T3.N', 'T4.T - T4.N',
+  'T5.T - T5.N', 'T6.T - T6.N', 'T7.T - T7.N', 'T8.T - T8.N',
+  # 第二时间段肿瘤与正常对比（小组2,3,4）
+  '((T2.T + T3.T + T4.T) - (T2.N + T3.N + T4.N))/3',
+  # 第三时间段肿瘤与正常对比（小组5,6,7）
+  '((T5.T + T6.T + T7.T) - (T5.N + T6.N + T7.N))/3',
+  # 肿瘤组织处理时间梯度对比
+  'T2.T - T1.T', 'T3.T - T1.T', 'T4.T - T1.T', 'T5.T - T1.T', 'T6.T - T1.T', 'T7.T - T1.T', 'T8.T - T1.T',
+  'T3.T - T2.T', 'T4.T - T2.T', 'T5.T - T2.T', 'T6.T - T2.T', 'T7.T - T2.T', 'T8.T - T2.T',
+  'T4.T - T3.T', 'T5.T - T3.T', 'T6.T - T3.T', 'T7.T - T3.T', 'T8.T - T3.T',
+  'T5.T - T4.T', 'T6.T - T4.T', 'T7.T - T4.T', 'T8.T - T4.T',
+  'T6.T - T5.T', 'T7.T - T5.T', 'T8.T - T5.T',
+  'T7.T - T6.T', 'T8.T - T6.T',
+  'T8.T - T7.T',
+  # 正常组织处理时间梯度对比
+  'T2.N - T1.N', 'T3.N - T1.N', 'T4.N - T1.N', 'T5.N - T1.N', 'T6.N - T1.N', 'T7.N - T1.N', 'T8.N - T1.N',
+  'T3.N - T2.N', 'T4.N - T2.N', 'T5.N - T2.N', 'T6.N - T2.N', 'T7.N - T2.N', 'T8.N - T2.N',
+  'T4.N - T3.N', 'T5.N - T3.N', 'T6.N - T3.N', 'T7.N - T3.N', 'T8.N - T3.N',
+  'T5.N - T4.N', 'T6.N - T4.N', 'T7.N - T4.N', 'T8.N - T4.N',
+  'T6.N - T5.N', 'T7.N - T5.N', 'T8.N - T5.N',
+  'T7.N - T6.N', 'T8.N - T6.N',
+  'T8.N - T7.N',
+  levels = design.single2
+) %>%
+  contrasts.fit(fit.single2, contrasts = .) %>%
+  eBayes
+
+##------------------
+## nested interaction
+##------------------
+design.nested <- model.matrix(~0+timepoint+timepoint:group)
+colnames(design.nested) %<>% 
+  stringi::stri_replace_all_fixed('timepoint', '') %>%
+  stringi::stri_replace_all_fixed('group', '') %>%
+  stringi::stri_replace_all_fixed(':', '.') 
+
+## multilevel
+corfit <- duplicateCorrelation(t(d10.log2),design.nested, block=ds10$subject)
+
+fit.nested <- limma::lmFit(
+  t(d10.log2), 
+  design.nested,
+  block = ds10$subject,
+  correlation = corfit$consensus.correlation
+)
+
+# fit2.single <- vapply(1:8, function(i) {
+#   sprintf('T%d.T - T%d.N', i, i)
+# }, character(1)) %>%
+#   as.list %>%
+#   c(list(levels = design.single)) %>%
+#   do.call(makeContrasts, .) %>%
+#   contrasts.fit(fit, .) %>%
+#   eBayes
+
+fit2.nested <- makeContrasts(
+  # 对比组一：肿瘤与正常对比
+  'T1.T', 'T2.T', 'T3.T', 'T4.T',
+  'T5.T', 'T6.T', 'T7.T', 'T8.T',
+  # 第二时间段肿瘤与正常对比（小组2,3,4）
+  '(T2.T + T3.T + T4.T)/3',
+  # 第三时间段肿瘤与正常对比（小组5,6,7）
+  '(T5.T + T6.T + T7.T)/3',
+  # 肿瘤组织处理时间梯度对比
+  '(T2 - T1) + (T2.T - T1.T)',
+  '(T3 - T1) + (T3.T - T1.T)',
+  '(T4 - T1) + (T4.T - T1.T)',
+  '(T5 - T1) + (T5.T - T1.T)',
+  '(T6 - T1) + (T6.T - T1.T)',
+  '(T7 - T1) + (T7.T - T1.T)',
+  '(T8 - T1) + (T8.T - T1.T)',
+  '(T3 - T2) + (T3.T - T2.T)',
+  '(T4 - T2) + (T4.T - T2.T)',
+  '(T5 - T2) + (T5.T - T2.T)',
+  '(T6 - T2) + (T6.T - T2.T)',
+  '(T7 - T2) + (T7.T - T2.T)',
+  '(T8 - T2) + (T8.T - T2.T)',
+  '(T4 - T3) + (T4.T - T3.T)',
+  '(T5 - T3) + (T5.T - T3.T)',
+  '(T6 - T3) + (T6.T - T3.T)',
+  '(T7 - T3) + (T7.T - T3.T)',
+  '(T8 - T3) + (T8.T - T3.T)',
+  '(T5 - T4) + (T5.T - T4.T)',
+  '(T6 - T4) + (T6.T - T4.T)',
+  '(T7 - T4) + (T7.T - T4.T)',
+  '(T8 - T4) + (T8.T - T4.T)',
+  '(T6 - T5) + (T6.T - T5.T)',
+  '(T7 - T5) + (T7.T - T5.T)',
+  '(T8 - T5) + (T8.T - T5.T)',
+  '(T7 - T6) + (T7.T - T6.T)',
+  '(T8 - T6) + (T8.T - T6.T)',
+  '(T8 - T7) + (T8.T - T7.T)',
+  # 正常组织处理时间梯度对比
+  '(T2 - T1)',
+  '(T3 - T1)',
+  '(T4 - T1)',
+  '(T5 - T1)',
+  '(T6 - T1)',
+  '(T7 - T1)',
+  '(T8 - T1)',
+  '(T3 - T2)',
+  '(T4 - T2)',
+  '(T5 - T2)',
+  '(T6 - T2)',
+  '(T7 - T2)',
+  '(T8 - T2)',
+  '(T4 - T3)',
+  '(T5 - T3)',
+  '(T6 - T3)',
+  '(T7 - T3)',
+  '(T8 - T3)',
+  '(T5 - T4)',
+  '(T6 - T4)',
+  '(T7 - T4)',
+  '(T8 - T4)',
+  '(T6 - T5)',
+  '(T7 - T5)',
+  '(T8 - T5)',
+  '(T7 - T6)',
+  '(T8 - T6)',
+  '(T8 - T7)',
+  levels = design.nested
+) %>%
+  contrasts.fit(fit.nested, contrasts = .) %>%
+  eBayes
+
+##------------------
+## classic interaction
+##------------------
+design.interaction <- model.matrix(~0+timepoint*group)
+colnames(design.interaction) %<>% 
+  stringi::stri_replace_all_fixed('timepoint', '') %>%
+  stringi::stri_replace_all_fixed('group', '') %>%
+  stringi::stri_replace_all_fixed(':', '.')
+
+
+## multilevel
+corfit <- duplicateCorrelation(t(d10.log2),design.interaction, block=ds10$subject)
+
+fit.interaction <- limma::lmFit(
+  t(d10.log2), 
+  design.interaction,
+  block = ds10$subject,
+  correlation = corfit$consensus.correlation
+)
+
+# fit2.single <- vapply(1:8, function(i) {
+#   sprintf('T%d.T - T%d.N', i, i)
+# }, character(1)) %>%
+#   as.list %>%
+#   c(list(levels = design.single)) %>%
+#   do.call(makeContrasts, .) %>%
+#   contrasts.fit(fit, .) %>%
+#   eBayes
+
+fit2.interaction <- makeContrasts(
+  # 对比组一：肿瘤与正常对比
+  'T', 'T + T2.T', 'T + T3.T', 'T + T4.T',
+  'T + T5.T', 'T + T6.T', 'T + T7.T', 'T + T8.T',
+  # 第二时间段肿瘤与正常对比（小组2,3,4）
+  '((T + T2.T) + (T + T3.T) + (T + T4.T))/3',
+  # 第三时间段肿瘤与正常对比（小组5,6,7）
+  '((T + T5.T) + (T + T6.T) + (T + T7.T))/3',
+  # 肿瘤组织处理时间梯度对比
+  '(T2 - T1) + T2.T',
+  '(T3 - T1) + T3.T',
+  '(T4 - T1) + T4.T',
+  '(T5 - T1) + T5.T',
+  '(T6 - T1) + T6.T',
+  '(T7 - T1) + T7.T',
+  '(T8 - T1) + T8.T',
+  '(T3 - T2) + (T3.T - T2.T)',
+  '(T4 - T2) + (T4.T - T2.T)',
+  '(T5 - T2) + (T5.T - T2.T)',
+  '(T6 - T2) + (T6.T - T2.T)',
+  '(T7 - T2) + (T7.T - T2.T)',
+  '(T8 - T2) + (T8.T - T2.T)',
+  '(T4 - T3) + (T4.T - T3.T)',
+  '(T5 - T3) + (T5.T - T3.T)',
+  '(T6 - T3) + (T6.T - T3.T)',
+  '(T7 - T3) + (T7.T - T3.T)',
+  '(T8 - T3) + (T8.T - T3.T)',  
+  '(T5 - T4) + (T5.T - T4.T)',
+  '(T6 - T4) + (T6.T - T4.T)',
+  '(T7 - T4) + (T7.T - T4.T)',
+  '(T8 - T4) + (T8.T - T4.T)',
+  '(T6 - T5) + (T6.T - T5.T)',
+  '(T7 - T5) + (T7.T - T5.T)',
+  '(T8 - T5) + (T8.T - T5.T)',  
+  '(T7 - T6) + (T7.T - T6.T)',
+  '(T8 - T6) + (T8.T - T6.T)',  
+  '(T8 - T7) + (T8.T - T7.T)',  
+  # 正常组织处理时间梯度对比
+  'T2 - T1',
+  'T3 - T1',
+  'T4 - T1',
+  'T5 - T1',
+  'T6 - T1',
+  'T7 - T1',
+  'T8 - T1',
+  'T3 - T2',
+  'T4 - T2',
+  'T5 - T2',
+  'T6 - T2',
+  'T7 - T2',
+  'T8 - T2',
+  'T4 - T3',
+  'T5 - T3',
+  'T6 - T3',
+  'T7 - T3',
+  'T8 - T3',
+  'T5 - T4',
+  'T6 - T4',
+  'T7 - T4',
+  'T8 - T4',
+  'T6 - T5',
+  'T7 - T5',
+  'T8 - T5',
+  'T7 - T6',
+  'T8 - T6',
+  'T8 - T7',
+  levels = design.interaction
+) %>%
+  contrasts.fit(fit.interaction, contrasts = .) %>%
+  eBayes
+
+
+##------------------
+## 
+##------------------
+if (F) {
+  data.frame(
+    `single factor` = colnames(design.single), 
+    `nested` = colnames(design.nested), 
+    `interaction` = colnames(design.interaction)) %>%
+    kable(format = 'markdown')
+  
+  
+  
+  rownames(design.single) <- rownames(design.single2) <- rownames(design.nested) <-rownames(design.interaction) <- rownames(d10)
+  
+  
+  
+  write.csv(design.single, 'output/110/design_single.csv')
+  write.csv(design.single2, 'output/110/design_single2.csv')
+  write.csv(design.nested, 'output/110/design_nested.csv')
+  write.csv(design.interaction, 'output/110/design_interaction.csv')
+}
+
+plyr::l_ply(c('single', 'single2', 'nested', 'interaction'), function(x) {
+  fit2 <- get(paste0('fit2.', x))
+  
+  dir.name <- file.path(output.dir, x)
+  if (!dir.exists(dir.name)) {
+    dir.create(dir.name)
+  }
+  
+  plyr::l_ply(seq_along(colnames(fit2$contrasts)), function(i) {
+    file.name <- file.path(
+      dir.name, 
+      paste0(colnames(fit2$contrasts)[i], '.csv') %>%
+        stringi::stri_replace_all_fixed('/', ' div ')
+    )
+    print(file.name)
+    topTable(fit2, coef = i, number = Inf, adjust.method = 'BH') %>%
+      write.csv(file = file.name, row.names = T)
+  })
+})
+```
+
+
+热图显示log2FC和adjusted P
+
+```{r}
+res <- lapply(seq_along(colnames(fit2.single$contrasts)), function(i) {
+  topTable(fit2.single, coef = i, number = Inf, adjust.method = 'BH')[colnames(d10.log2), c('logFC', 'adj.P.Val')]
+})
+
+d.logFC <- purrr::map(res, 'logFC') %>%
+  do.call(cbind, .)
+
+d.adj.P <- purrr::map(res, 'adj.P.Val') %>%
+  do.call(cbind, .)
+
+rownames(d.logFC) <- rownames(d.adj.P) <- colnames(d10.log2)
+colnames(d.logFC) <- colnames(d.adj.P) <- colnames(fit2.single$contrasts)
+
+library(ComplexHeatmap)
+
+p1 <- Heatmap(
+  d.logFC, 
+  name = 'logFC',
+  cluster_rows = T,
+  cluster_columns = F,
+  col = circlize::colorRamp2(c(-2, 0, 2), c("navyblue", "white", "firebrick"))
+)
+
+
+d.logFC[d.adj.P >= 0.1] <- 0
+p2 <- Heatmap(
+  d.logFC, 
+  name = 'logFC',
+  cluster_rows = T,
+  cluster_columns = F,
+  col = circlize::colorRamp2(c(-2, 0, 2), c("navyblue", "white", "firebrick"))
+)
+
+
+cairo_pdf(file = file.path(output.dir, 'heatmap_summary.pdf'),
+          width = 6,
+          height = 10,
+          onefile = T)
+draw(p1, padding =unit(c(60, 10, 10, 60), "mm"))
+dev.off()
+
+
+cairo_pdf(file = file.path(output.dir, 'heatmap_summary.pdf'),
+          width = 6,
+          height = 10,
+          onefile = T)
+draw(p2, padding =unit(c(60, 10, 10, 60), "mm"))
+dev.off()
+
+
+
+
+
+# pdf(file = file.path(output.dir, 'heatmap_summary.pdf'),
+#     width = 18, height = 30)
+# draw(p1, padding =unit(c(60, 10, 10, 60), "mm"))
+# dev.off()
+# 
+# pdf(file = file.path(output.dir, 'heatmap_summary_FDRlt0.1.pdf'),
+#     width = 18, height = 30)
+# draw(p2, padding =unit(c(60, 10, 10, 60), "mm"))
+# dev.off()
+```
+

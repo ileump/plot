@@ -1,0 +1,182 @@
+```{r}
+source('Rscript/setup.R')
+source('Rscript/functions.R')
+source('Rscript/app_functions.R')
+source('Rscript/app_functions_2.R')
+# source('Rscript/pathway_funs.R')
+
+options(useFancyQuotes = FALSE)
+options(java.parameters = '-Xmx8000m')
+
+knitr::opts_chunk$set(
+  cache = T,
+  message = F,
+  dpi = 300
+)
+
+library(plyr)
+library(ggplot2)
+library(magrittr)
+library(kableExtra)
+library(dplyr)
+library(circlize)
+library(WGCNA)
+
+library(extrafont)
+# loadfonts(device = 'win', quiet = T)
+# par(family = 'Liberation')
+# windowsFonts(
+#   serif = 'Liberation Serif',
+#   sans = 'Liberation Sans',
+#   mono = 'Liberation Mono'
+# )
+
+par(family = 'sans')
+
+prefix <- '140'
+output.dir <- file.path('output', prefix)
+Sys.setlocale("LC_ALL","Chinese")
+
+if (!dir.exists(output.dir)) {
+    dir.create(output.dir, recursive = T)
+}
+```
+
+```{r}
+d10 <- read.csv("data/2019-053-B-02/data.csv",check.names = F,row.names = 1)
+s10 <- read.csv("data/2019-053-B-02/sample.csv",check.names = F,row.names = 1)
+v10 <- read.csv("data/2019-053-B-02/var.csv",check.names = F,row.names = 1)
+```
+
+
+```{r}
+pdf(file.path(output.dir, 'chord.pdf'), w = 17, h = 17)
+par(family = 'serif')
+plyr::l_ply(unique(s10$Group), function(g.i) {
+  require(circlize)
+  ind <- which(s10$Group == g.i)
+  d <- d10[ind, ]
+  
+  attr1 <- getAttrs(colnames(d10))
+  
+  cor.out <- psych::corr.test(
+    d, method = 'spearman', ci = F, adjust = 'none'
+  )
+  
+  r <- reshape2::melt(cor.out$r)[reshape2::melt(lower.tri(cor.out$r))[, 'value'], ]
+  colnames(r)[3] <- 'spearman'
+  p <- reshape2::melt(cor.out$p)[reshape2::melt(lower.tri(cor.out$p))[, 'value'], ]
+  colnames(p)[3] <- 'p'
+  p$fdr <- p.adjust(p$p, method = 'fdr')
+  
+  testthat::expect_equal(
+    r$Var1, p$Var1
+  )
+  
+  testthat::expect_equal(
+    r$Var2, p$Var2
+  )
+  
+  cor.dis <- cbind(r, p[, c('p', 'fdr')])
+  
+  file.out <- file.path(output.dir, paste0('spearman_group_', g.i, '.csv'))
+  if (!file.exists(file.out)) {
+    write.csv(cor.dis, file.out, row.names = F)
+  }
+  
+  d.chord <- cor.dis %>% 
+    dplyr::mutate(
+      class1 = attr1[Var1, 'class'],
+      class2 = attr1[Var2, 'class'],
+      sign = ifelse(spearman > 0, 1, -1),
+      col = ifelse(spearman > 0, 'red', 'green')
+    ) %>% dplyr::filter(
+    fdr < 0.05
+  ) %>% dplyr::group_by(class1, class2, col) %>%
+    dplyr::summarise(n = dplyr::n())
+  d.chord$n <- scale(d.chord$n)
+  
+  n <- length(unique(c(d.chord$class1, d.chord$class2)))
+  circlize::chordDiagram(
+    d.chord[, c(1,2,4)],  grid.col = 2:(n+1), 
+    col = d.chord[, 'col'] %>% unlist,
+    order = c("Acylcarnitine","CE","Cer","DAG","FFA","GM3","LacCer","LPC","LPE","LPI","LPS","PA","PC","BMP","PE","GluCer","PG","LPA","PS","PI","S1P", "SM","TAG"), 
+    annotationTrack = c('axis', "grid"), 
+    preAllocateTracks = list(track.height = mm_h(5)))
+  
+  
+  circos.track(track.index = 1, panel.fun = function(x, y) {
+    circos.text(CELL_META$xcenter, CELL_META$ylim[1], CELL_META$sector.index, 
+                facing = "inside", niceFacing = TRUE, adj = c(0.5, -1), cex = 2)
+  }, bg.border = NA) # here set bg.border to NA is important
+  
+  # circos.clear()
+})
+
+dev.off()
+
+```
+
+```{r}
+pdf(file.path(output.dir, 'two group chord.pdf'), w = 17, h = 17)
+par(family = 'serif')
+  d <- d10
+  
+  attr1 <- getAttrs(colnames(d10))
+  
+  cor.out <- psych::corr.test(
+    d, method = 'spearman', ci = F, adjust = 'none'
+  )
+  
+  r <- reshape2::melt(cor.out$r)[reshape2::melt(lower.tri(cor.out$r))[, 'value'], ]
+  colnames(r)[3] <- 'spearman'
+  p <- reshape2::melt(cor.out$p)[reshape2::melt(lower.tri(cor.out$p))[, 'value'], ]
+  colnames(p)[3] <- 'p'
+  p$fdr <- p.adjust(p$p, method = 'fdr')
+  
+  testthat::expect_equal(
+    r$Var1, p$Var1
+  )
+  
+  testthat::expect_equal(
+    r$Var2, p$Var2
+  )
+  
+  cor.dis <- cbind(r, p[, c('p', 'fdr')])
+  
+  file.out <- file.path(output.dir, paste0('spearman_two_group_', '.csv'))
+  if (!file.exists(file.out)) {
+    write.csv(cor.dis, file.out, row.names = F)
+  }
+  
+  d.chord <- cor.dis %>% 
+    dplyr::mutate(
+      class1 = attr1[Var1, 'class'],
+      class2 = attr1[Var2, 'class'],
+      sign = ifelse(spearman > 0, 1, -1),
+      col = ifelse(spearman > 0, 'red', 'green')
+    ) %>% dplyr::filter(
+    fdr < 0.05
+  ) %>% dplyr::group_by(class1, class2, col) %>%
+    dplyr::summarise(n = dplyr::n())
+  d.chord$n <- scale(d.chord$n)
+  
+  n <- length(unique(c(d.chord$class1, d.chord$class2)))
+  circlize::chordDiagram(
+    d.chord[, c(1,2,4)],  grid.col = 2:(n+1), 
+    col = d.chord[, 'col'] %>% unlist,
+    order = c("Acylcarnitine","CE","Cer","DAG","FFA","GM3","LacCer","LPC","LPE","LPI","LPS","PA","PC","BMP","PE","GluCer","PG","LPA","PS","PI","S1P", "SM","TAG"), 
+    annotationTrack = c('axis', "grid"), 
+    preAllocateTracks = list(track.height = mm_h(5)))
+  
+  
+  circos.track(track.index = 1, panel.fun = function(x, y) {
+    circos.text(CELL_META$xcenter, CELL_META$ylim[1], CELL_META$sector.index, 
+                facing = "inside", niceFacing = TRUE, adj = c(0.5, -1), cex = 2)
+  }, bg.border = NA) # here set bg.border to NA is important
+  
+  # circos.clear()
+
+dev.off()
+```
+

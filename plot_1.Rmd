@@ -1,0 +1,331 @@
+---
+title: "heatmap hord diagram ankey diagram"
+output: html_document
+---
+
+
+```{r, include=F, echo=F, message=F, warnings=F}
+source('Rscript/setup.R')
+source('Rscript/functions.R')
+source('Rscript/app_functions.R')
+source('Rscript/app_functions_2.R')
+source('rscript/pathway_funs.R', encoding = 'UTF-8')
+
+
+options(useFancyQuotes = FALSE)
+options(java.parameters = '-Xmx8000m')
+
+knitr::opts_chunk$set(
+  cache = T,
+  message = F,
+  dpi = 300
+)
+
+library(plyr)
+library(ggplot2)
+library(magrittr)
+# library(MetaboAnalystR)
+library(kableExtra)
+library(data.table)
+
+
+# library(extrafont)
+# loadfonts(device = 'win', quiet = T)
+# par(family = 'Liberation')
+# windowsFonts(
+#   serif = 'Liberation Serif',
+#   sans = 'Liberation Sans',
+#   mono = 'Liberation Mono'
+# )
+
+par(family = 'sans')
+
+set.seed(1)
+
+prefix <- 'plot_1'
+output.dir <- file.path('output', prefix)
+# Sys.setlocale("LC_ALL","Chinese")
+
+if (!dir.exists(output.dir)) {
+    dir.create(output.dir, recursive = T)
+}
+```
+
+
+```{r, read files}
+f10 <- '/Users/leump/Desktop/Plot/data/20200917 安宇发送中科脂典 朝阳医院内分泌科 脂类数据作图原始表格.xls'
+
+## 12 461
+d10 <- XLConnect::readWorksheetFromFile(
+  f10, 
+  sheet = 'Lipid',
+  startRow = 2,
+  check.names = F,
+  rownames = 1
+)[, -1]
+
+d20 <- XLConnect::readWorksheetFromFile(
+  f10, 
+  sheet = 4,
+  check.names = F,
+  rownames = 1
+)
+
+s10 <- XLConnect::readWorksheetFromFile(
+  f10,
+  sheet = 2,
+  check.names = F
+)
+
+## N17, N18 do not have clinical data
+d11 <- d10[s10$ID, ]
+
+testthat::expect_equal(
+  rownames(d11), 
+  s10$ID
+)
+```
+
+
+```{r, heatmap_1}
+selected <- c(
+  'PE(17:0)', 'PC(18:1/18:0)',
+  'Cer(d18:1/16:0)', 'Cer(d18:1/18:0)', 'Cer(d18:1/20:0)', 
+  'Cer(d18:1/24:1)', 'SM(d18:1/18:0)', 'SM(d18:1/18:1)', 
+  'LPC(16:0)', 'LPE(18:0)', 'LPC(17:0)', 'LPC(15:0)', 
+  'PC(19:0)', 'PE(16:0/22:6)', 'PE(18:0/22:6)'
+)
+ 
+df0 <- d11[s10$Group == 0, selected]
+ds0 <- subset(s10, Group == 0)
+
+
+cor0 <- psych::corr.test(df0, ds0[, -1:-2], adjust = 'none', ci = F)
+p_mat <- apply(cor0$p, 2, function(x) {
+  ifelse(x < 0.01, '**',
+         ifelse(x < 0.05, '*', ''))
+})
+
+annotation_row = data.frame(
+  Change = rep(c('Up-regulated', 'Down-regulated'), c(2, length(selected)-2))
+)
+rownames(annotation_row) = rownames(cor0$r)
+
+p <- pheatmap::pheatmap(
+  cor0$r,
+  display_numbers = p_mat,
+  scale = 'none',
+  color = colorRampPalette(c("navy", "white", "firebrick3"))(100),
+  breaks = seq(-1, 1, length.out = 101),
+  cluster_rows = F,
+  cluster_cols = F,
+  annotation_row = annotation_row,
+  fontfamily = 'Times New Roman'
+)
+
+p <- grid_fam(p, 'Times New Roman')
+
+cairo_pdf(file.path(output.dir, 'heatmap_1.pdf'), width = 5, height = 3.5,
+          family = 'Times New Roman')
+
+ggsave(file.path(output.dir, 'heatmap_1.tiff'),
+       plot = p,  dpi = 300, width = 5, height = 3.5)
+
+grid::grid.draw(p)
+dev.off()
+```
+
+
+```{r, heatmap_2}
+dd <- d10.liver %>% 
+  dplyr::select(Cho:GluCer) %>%
+  scale %>% 
+  aggregate(by = list(Group = s10.liver$Group), mean) %>%
+  dplyr::filter(Group == 'apoM⁻ᐟ???')%>%
+  reshape2::melt() %>%
+  dplyr::mutate(
+    variable = factor(variable, levels = rev(unique(variable))),
+    FDR = ht10.liver[as.character(variable), 'FDR'],
+    label = ifelse(FDR < 0.05, '*', ''),
+    label_color = ifelse(abs(value) > 0.5, 'white', 'black')
+  )
+  
+
+p <- ggplot(dd, aes(x = Group, y = variable)) +
+  geom_tile(aes(fill = value)) +
+  geom_text(aes(label = label), nudge_x = 0.55) +
+  geom_text(aes(x = 0.8,
+                label = paste("italic(FDR)", '==', signif(FDR, digits = 2))),
+            size = 3,
+            hjust = 0, parse = T) +
+  scale_fill_gradient2(low = 'blue', mid = 'white', high = 'red') +
+  scale_x_discrete(expand = expansion(add = c(0.1, 0.6))) +
+  labs(x = '', y = '', title = 'Liver') +
+  guides(fill = guide_colorbar(title = NULL, barheight = unit(0.8, 'npc'))) +
+  theme_minimal(base_family = "serif") +
+  theme(panel.grid.major = element_blank(),
+        axis.text.x = element_text(size = 12),
+        plot.title = element_text(hjust = 0.5))
+
+ggsave(file.path(output.dir, 'fig3A.tiff'),
+       plot = p,  dpi = 300, compress = 'lzw+p', width = 3, height = 4)
+```
+
+
+```{r, chord diagram}
+output.dir <- file.path('output', prefix)
+if (!dir.exists(output.dir)) {
+  dir.create(output.dir, recursive = T)
+}
+pdf(file.path(output.dir, 'chord.pdf'), w = 7, h = 7)
+par(family = 'serif')
+
+plyr::l_ply(unique(s10$Group), function(g.i) {
+  require(circlize)
+  ind <- which(s10$Group == g.i)
+  d <- d11[ind, ]
+  
+  attr1 <- getAttrs(colnames(d11))
+  
+  cor.out <- psych::corr.test(
+    d, method = 'spearman', ci = F, adjust = 'none'
+  )
+  
+  r <- reshape2::melt(cor.out$r)[reshape2::melt(lower.tri(cor.out$r))[, 'value'], ]
+  colnames(r)[3] <- 'spearman'
+  p <- reshape2::melt(cor.out$p)[reshape2::melt(lower.tri(cor.out$p))[, 'value'], ]
+  colnames(p)[3] <- 'p'
+  p$fdr <- p.adjust(p$p, method = 'fdr')
+  p
+  testthat::expect_equal(
+    r$Var1, p$Var1
+  )
+  
+  testthat::expect_equal(
+    r$Var2, p$Var2
+  )
+  
+  cor.dis <- cbind(r, p[, c('p', 'fdr')])
+  
+
+  file.out <- file.path(output.dir, 'chord', paste0('spearman_group_', g.i, '.csv'))
+  # if (!file.exists(file.out)) {
+  #   write.csv(cor.dis, file.out, row.names = F)
+  # }
+  
+  d.chord <- cor.dis %>% 
+    dplyr::mutate(
+      class1 = attr1[Var1, 'class'],
+      class2 = attr1[Var2, 'class'],
+      sign = ifelse(spearman > 0, 1, -1),
+      col = ifelse(spearman > 0, 'red', 'green')
+    ) %>% dplyr::filter(
+    p < 0.05
+  ) %>% dplyr::group_by(class1, class2, col) %>%
+    dplyr::summarise(n = dplyr::n())
+  
+  n <- length(unique(c(d.chord$class1, d.chord$class2)))
+  circlize::chordDiagram(
+    d.chord[, c(1,2,4)],  grid.col = 2:(n+1), 
+    col = d.chord[, 'col'] %>% unlist,
+    order = c(
+      'LPC', 'PE', 'LPE', 'PC', 'SM', 'Cer'
+    ),
+    annotationTrack = c('axis', "grid"), 
+    preAllocateTracks = list(track.height = mm_h(5))
+    )
+  
+  # circos.track(track.index = 1, panel.fun = function(x, y) {
+  #   circos.text(CELL_META$xcenter, CELL_META$ylim[1], CELL_META$sector.index, 
+  #               facing = "inside", niceFacing = TRUE, adj = c(0.5, -1), cex = 2)
+  # }, bg.border = NA) # here set bg.border to NA is important
+  
+  # circos.clear()
+  
+})
+
+dev.off()
+```
+
+
+```{r, sankey diagram}
+output.dir <- file.path('output', prefix)
+if (!dir.exists(output.dir)) {
+  dir.create(output.dir, recursive = T)
+}
+cairo_pdf(file.path(output.dir, 'sankey_diff.pdf'), w = 7, h = 10,
+          onefile = T)
+par(family = 'serif')
+plyr::l_ply(1, function(g.i) {
+  require(ggalluvial)
+  
+  d <- d20[, -1:-13]
+  colnames(d) <- stringr::str_sub(colnames(d), 2, -1)
+  s <- d20[, 1:13]
+  colnames(s) <- stringr::str_sub(colnames(s), 2, -1)
+  
+  attr1 <- getAttrs(colnames(d))
+  
+  cor.out <- psych::corr.test(
+    d, s, method = 'spearman', ci = F, adjust = 'none'
+  )
+  
+  r <- reshape2::melt(cor.out$r)
+  colnames(r)[3] <- 'spearman'
+  p <- reshape2::melt(cor.out$p)
+  colnames(p)[3] <- 'p'
+  p$fdr <- p.adjust(p$p, method = 'fdr')
+  
+  testthat::expect_equal(
+    r$Var1, p$Var1
+  )
+  
+  testthat::expect_equal(
+    r$Var2, p$Var2
+  )
+  
+  cor.dis <- cbind(r, p[, c('p', 'fdr')])
+  
+  file.out <- file.path(output.dir, 'sankey', paste0('spearman_group_', 'diff', '.csv'))
+  # if (!file.exists(file.out)) {
+  #   write.csv(cor.dis, file.out, row.names = F)
+  # }
+  
+  d.chord <- cor.dis %>% 
+    dplyr::mutate(
+      Class = attr1[Var1, 'class'],
+      sign = ifelse(spearman > 0, 1, -1),
+      Correlation = ifelse(spearman > 0, 'Positive', 'Negative') %>%
+        factor(levels = c('Positive', 'Negative'))
+    ) %>% dplyr::filter(
+    p < 0.05
+  ) %>% 
+    dplyr::rename(Clinical = Var2) %>%
+    dplyr::group_by(Class, Clinical, Correlation) %>%
+    dplyr::summarise(n = dplyr::n())
+  
+  update_geom_defaults('text', list(family = 'serif'))
+  p <- ggplot(data = d.chord,
+         aes(axis1 = Class, axis2 = Clinical,
+             y = n)) +
+    scale_x_discrete(limits = c("Class", "Clinical"), expand = c(.2, .05)) +
+    labs(x = '', y = '') +
+    geom_alluvium(aes(fill = Correlation)) +
+    geom_stratum() +
+    geom_text(stat = "stratum", aes(label = after_stat(stratum))) +
+    theme_minimal(base_family = 'serif') +
+    theme(panel.grid = element_blank(),
+          axis.text.x = element_text(size = 16),
+          axis.text.y = element_blank()) 
+  print(p)
+  
+  ggsave(file.path(output.dir, 'sankey.pdf'),
+         plot = p,  dpi = 300, width = 7, height = 10)
+  
+  ggsave(file.path(output.dir, 'sankey.tiff'),
+         plot = p,  dpi = 300, width = 7, height = 10)
+  
+})
+
+dev.off()
+```

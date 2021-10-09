@@ -1,0 +1,26 @@
+---
+title: "median fold normalized"
+author: "leump"
+date: "2020/12/24"
+output: html_document
+---
+
+
+
+
+```{r}
+d <- read.csv(file = "C:/Users/leump/Desktop/data.csv", header=T, row.names = 1, check.names = FALSE)
+
+col.median <- apply(d, 2, median)
+
+x.fold <- sweep(d, 2, col.median, '/')
+
+median.fold <- apply(x.fold, 1, median)
+
+x.normalized <- sweep(d, 1, median.fold, '/')
+
+
+write.csv(x.normalized, 'normalized.csv')
+```
+
+

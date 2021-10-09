@@ -1,0 +1,1231 @@
+---
+title: "MetaMapR"
+output: word_document
+---
+
+Produce network graph using MetaMapR.
+
+- biochemical reaction networks
+	- KEGG RPAIR
+- structural similarity network
+    - R packages Chemminer using PubChemn Power User Gateway (PUG)
+	- Presence and absence of physical properties
+		- element type
+		- functional group
+		- nearest neighbors
+	- Pairwise similarities are calculated based on the Tanimoto similarity between two bit vectors
+	- Selection of structural similarity threshold can be found in Barupal et al., 2012. Usually 0.7.
+
+
+Cut-off of tanimoto similarity is 0.7, as used in other papers.
+
+
+
+Metaboliic network was constructed with identified metabolites in each tissues, with structural similarity and biochemical relationship.
+
+**Data source:**
+
+1. Require p value, fold change, KEGG ID, PubChem ID
+
+- output/20/kidney_pathview.xlsx
+- output/20/liver_pathview.xlsx
+- output/20/serum_pathview.xlsx
+
+2. Metabolite Class from original data
+
+**Parameters:**
+
+1. For structural similarity, tanimoto similarity index > 0.7
+2. Raw P < 0.05 is considered significant
+3. Raw P < 0.05, fold change > 1 => increase; raw P < 0.05, fold change < 1 => decrease
+
+
+**Metabolite class**
+- `Amino acids` = 'Amino Acid',
+- `Glycerophosphocholines` =  'Lipid Metabolism',
+- `Acyl carnitines` = 'Energy Metabolism',
+- `Glycerophosphoethanolamines` = 'Lipid Metabolism',
+- `Fatty acids` = 'Lipid Metabolism',
+- `Carbohydrates` = 'Carbohydrate Metabolism',
+- `Pyrimidine nucleosides` = 'Nucleotide Metabolism',
+- `Pyrimidines` = 'Nucleotide Metabolism',
+- `Purines` = 'Nucleotide Metabolism',
+- `Glycerophospholipids` = 'Lipid Metabolism',
+- `Steroids` = 'Lipid Metabolism',
+- `Purines` = 'Nucleotide Metabolism',
+- `Nucleoside` = 'Nucleitide Metabolism',
+- `Alpha hydroxy acids` = 'Organic Acid',
+- `Beta hydroxy acids` = 'Organic Acid',
+- `Benzoic acids` = 'Organic Acid',
+- `Hydroxy acids` = 'Organic Acid',
+- `Keto acids` = 'Organic Acid',
+- `Bile acids` = 'Organic Acid',
+- `Carboxylic acids` = 'Organic Acid',
+- `Dicarboxylic acid` = 'Organic Acid',
+- `Indolyl carboxylic acids` = 'Organic Acid',
+- `Phenylpropanoic acids` = 'Organic Acid',
+
+```{r, include=F}
+source('RScript/20191113/setup.R')
+if (Sys.info()[['sysname']] == 'Windows') {
+    
+    knitr::opts_chunk$set(
+        echo = FALSE,
+        message = FALSE,
+        include = FALSE,
+        warning = FALSE,
+        purl = FALSE,
+        dpi = 300
+    )
+    
+    options(java.parameters = '-Xmx4g')
+    options(stringsAsFactors = FALSE)
+    
+    library(data.table, quietly = TRUE)
+    library(DT)
+    
+    # color blind friendly color pallete
+    cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73",
+                   "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+    cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73",
+                    "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+    
+    source('RScript/pathway_funs.R')
+    source('RScript/functions.R')
+} else {
+    source('Rscripts/setup.R')
+    source('Rscripts/functions.R')
+}
+
+options(knitr.table.format = 'markdown')
+options(encoding = "UTF-8")
+Sys.setlocale(category="LC_ALL", locale = "English_United States.1252")
+
+knitr::opts_chunk$set(
+    cache = T,
+    message = F
+)
+
+library(igraph)
+library(dplyr)
+library(metabomapr)
+```
+
+## Install MetaMapR
+
+Download zip file from https://github.com/dgrapov/metabomapr.
+
+```{r, eval=F}
+# devtools::install_github("dgrapov/metabomapr")
+# dependencies
+# sudo apt install librsvg2-dev
+BiocManager::install('ChemmineR')
+install.packages('output/dgrapov-metabomapr-e400f0d.tar.gz', repos = NULL, type = 'source')
+
+library(metabomapr)
+library(dplyr)
+```
+
+
+```{r, eval = F}
+d.kidney <- XLConnect::readWorksheetFromFile(
+    file = 'output/20/kidney pathview.xlsx',
+    sheet= 'p',
+    check.names = F
+)
+
+cid_el.kidney <- CID_tanimoto(d.kidney[, 'PubChem'], as = 'edge.list') %>%
+    mutate(value = as.numeric(value))
+
+d.liver <- XLConnect::readWorksheetFromFile(
+    file = 'output/20/liver pathview.xlsx',
+    sheet = 'p',
+    check.names = F
+)
+
+cid_el.liver <- CID_tanimoto(d.liver[, 'PubChem'], as = 'edge.list') %>%
+    mutate(value = as.numeric(value))
+
+d.serum <- XLConnect::readWorksheetFromFile(
+    file = 'output/20/serum pathview.xlsx',
+    sheet = 'p',
+    check.names = F
+)
+
+cid_el.serum <- CID_tanimoto(d.serum[, 'PubChem'], as = 'edge.list') %>%
+    mutate(value = as.numeric(value))
+
+
+cid_el.kidney <- mutate(
+    cid_el.kidney,
+    type = 'Structural'
+) %>% filter(
+    value > 0.7
+) %>% mutate(
+    value = NULL
+)
+
+colnames(cid_el.kidney)[1:2] <- c('from', 'to')
+
+cid_el.liver <- mutate(
+    cid_el.liver,
+    type = 'Structural'
+) %>% filter(
+    value > 0.7
+) %>% mutate(
+    value = NULL
+)
+
+colnames(cid_el.liver)[1:2] <- c('from', 'to')
+
+cid_el.serum <- mutate(
+    cid_el.serum,
+    type = 'Structural'
+) %>% filter(
+    value > 0.7
+) %>% mutate(
+    value = NULL
+)
+
+colnames(cid_el.serum)[1:2] <- c('from', 'to')
+
+
+
+######################################################
+kegg_el.kidney <- get_KEGG_edgeList(d.kidney[, 'KEGG']) %>% 
+    filter(
+        source %in% d.kidney[, 'KEGG'] &
+            target %in% d.kidney[, 'KEGG']
+    ) %>% mutate(
+        source = d.kidney[match(source, d.kidney[, 'KEGG']), 'PubChem'],
+        target = d.kidney[match(target, d.kidney[, 'KEGG']), 'PubChem'],
+        type = 'Biochemical'
+    ) 
+
+colnames(kegg_el.kidney)[1:2] <- c('from', 'to')
+
+kegg_el.liver <- get_KEGG_edgeList(d.liver[, 'KEGG']) %>% 
+    filter(
+        source %in% d.liver[, 'KEGG'] &
+            target %in% d.liver[, 'KEGG']
+    ) %>% mutate(
+        source = d.liver[match(source, d.liver[, 'KEGG']), 'PubChem'],
+        target = d.liver[match(target, d.liver[, 'KEGG']), 'PubChem'],
+        type = 'Biochemical'
+    ) 
+
+colnames(kegg_el.liver)[1:2] <- c('from', 'to')
+
+
+kegg_el.serum <- get_KEGG_edgeList(d.serum[, 'KEGG']) %>% 
+    filter(
+        source %in% d.serum[, 'KEGG'] &
+            target %in% d.serum[, 'KEGG']
+    ) %>% mutate(
+        source = d.serum[match(source, d.serum[, 'KEGG']), 'PubChem'],
+        target = d.serum[match(target, d.serum[, 'KEGG']), 'PubChem'],
+        type = 'Biochemical'
+    )
+
+colnames(kegg_el.serum)[1:2] <- c('from', 'to')
+
+
+v.kidney <- XLConnect::readWorksheetFromFile(
+    'data/20190116/2018-050-B-06 WuChenQing MS data.xlsx',
+    sheet = 'Kidney identified',
+    check.names = F,
+    endCol = 4
+)
+
+v.liver <- XLConnect::readWorksheetFromFile(
+    'data/20190116/2018-050-B-06 WuChenQing MS data.xlsx',
+    sheet = 'Liver identified',
+    check.names = F,
+    endCol = 4
+)
+
+v.serum <- XLConnect::readWorksheetFromFile(
+    'data/20190116/2018-050-B-06 WuChenQing MS data.xlsx',
+    sheet = 'Serum identified',
+    check.names = F,
+    endCol = 4
+)
+
+## d.serum and v.serum 
+# > d.serum[132, 'name']
+# [1] "sn-2 LysoPC (14:0)"
+# > v.serum[132, 'Sample Name']
+# [1] "sn-1 LysoPE(22:6)"
+v.serum <- v.serum[which(v.serum[, 'Sample Name'] %in% d.serum[, 'name']), ]
+
+testthat::expect_equal(
+    d.kidney[, 'name'], v.kidney[, 'Sample Name']
+)
+
+testthat::expect_equal(
+    d.liver[, 'name'], v.liver[, 'Sample Name']
+)
+
+testthat::expect_equal(
+    d.serum[, 'name'], v.serum[, 'Sample Name']
+)
+
+v.kidney <- mutate(
+    v.kidney,
+    Class2 = sapply(Class, function(x) {
+        switch(
+            stringr::str_trim(x, side = 'both'),
+            `Amino acids` = 'Amino Acid',
+            `Glycerophosphocholines` =  'Lipid Metabolism',
+            `Acyl carnitines` = 'Energy Metabolism',
+            `Glycerophosphoethanolamines` = 'Lipid Metabolism',
+            `Fatty acids` = 'Lipid Metabolism',
+            `Carbohydrates` = 'Carbohydrate Metabolism',
+            `Pyrimidine nucleosides` = 'Nucleotide Metabolism',
+            `Pyrimidines` = 'Nucleotide Metabolism',
+            `Purines` = 'Nucleotide Metabolism',
+            `Glycerophospholipids` = 'Lipid Metabolism',
+            `Steroids` = 'Lipid Metabolism',
+            `Purines` = 'Nucleotide Metabolism',
+            `Nucleoside` = 'Nucleotide Metabolism',
+            `Alpha hydroxy acids` = 'Organic Acid',
+            `Beta hydroxy acids` = 'Organic Acid',
+            `Benzoic acids` = 'Organic Acid',
+            `Hydroxy acids` = 'Organic Acid',
+            `Keto acids` = 'Organic Acid',
+            `Bile acids` = 'Organic Acid',
+            `Carboxylic acids` = 'Organic Acid',
+            `Dicarboxylic acid` = 'Organic Acid',
+            `Indolyl carboxylic acids` = 'Organic Acid',
+            `Phenylpropanoic acids` = 'Organic Acid',
+            'Other'
+        )
+    }),
+    shape = sapply(Class2, function(x) {
+        switch(x,
+            `Carbohydrate Metabolism` = 'square',
+            `Energy Metabolism` = 'polygon3',
+            `Organic Acid` = 'polygon4',
+            `Lipid Metabolism` = 'polygon5',
+            `Amino Acid` = 'polygon6',
+            `Nucleotide Metabolism` = 'star4',
+            `Other` = 'circle'
+        )
+    })
+)
+
+#      HMDB ID                                     Link Class      Sample Name Class2  shape
+# 14 HMDB01043 http://www.hmdb.ca/metabolites/HMDB01043  <NA> Arachidonic acid  Other circle
+v.liver[14, 'Class'] <- 'Fatty acids'
+v.liver <- mutate(
+    v.liver,
+    Class2 = sapply(Class, function(x) {
+        switch(
+            stringr::str_trim(x, side = 'both'),
+            `Amino acids` = 'Amino Acid',
+            `Glycerophosphocholines` =  'Lipid Metabolism',
+            `Acyl carnitines` = 'Energy Metabolism',
+            `Glycerophosphoethanolamines` = 'Lipid Metabolism',
+            `Fatty acids` = 'Lipid Metabolism',
+            `Carbohydrates` = 'Carbohydrate Metabolism',
+            `Pyrimidine nucleosides` = 'Nucleotide Metabolism',
+            `Pyrimidines` = 'Nucleotide Metabolism',
+            `Purines` = 'Nucleotide Metabolism',
+            `Glycerophospholipids` = 'Lipid Metabolism',
+            `Steroids` = 'Lipid Metabolism',
+            `Purines` = 'Nucleotide Metabolism',
+            `Nucleoside` = 'Nucleotide Metabolism',
+            `Alpha hydroxy acids` = 'Organic Acid',
+            `Beta hydroxy acids` = 'Organic Acid',
+            `Benzoic acids` = 'Organic Acid',
+            `Hydroxy acids` = 'Organic Acid',
+            `Keto acids` = 'Organic Acid',
+            `Bile acids` = 'Organic Acid',
+            `Carboxylic acids` = 'Organic Acid',
+            `Dicarboxylic acid` = 'Organic Acid',
+            `Indolyl carboxylic acids` = 'Organic Acid',
+            `Phenylpropanoic acids` = 'Organic Acid',
+            'Other'
+        )
+    }) ,
+    shape = sapply(Class2, function(x) {
+        switch(x,
+            `Carbohydrate Metabolism` = 'square',
+            `Energy Metabolism` = 'polygon3',
+            `Organic Acid` = 'polygon4',
+            `Lipid Metabolism` = 'polygon5',
+            `Amino Acid` = 'polygon6',
+            `Nucleotide Metabolism` = 'star4',
+            `Other` = 'circle'
+        )
+    })
+)
+
+v.serum[111, 'Class'] <- 'Carbohydrates'
+v.serum <- mutate(
+    v.serum,
+    Class2 = sapply(Class, function(x) {
+        switch(
+            stringr::str_trim(x, side = 'both'),
+            `Amino acids` = 'Amino Acid',
+            `Glycerophosphocholines` =  'Lipid Metabolism',
+            `Acyl carnitines` = 'Energy Metabolism',
+            `Glycerophosphoethanolamines` = 'Lipid Metabolism',
+            `Fatty acids` = 'Lipid Metabolism',
+            `Carbohydrates` = 'Carbohydrate Metabolism',
+            `Pyrimidine nucleosides` = 'Nucleotide Metabolism',
+            `Pyrimidines` = 'Nucleotide Metabolism',
+            `Purines` = 'Nucleotide Metabolism',
+            `Glycerophospholipids` = 'Lipid Metabolism',
+            `Steroids` = 'Lipid Metabolism',
+            `Purines` = 'Nucleotide Metabolism',
+            `Nucleoside` = 'Nucleotide Metabolism',
+            `Alpha hydroxy acids` = 'Organic Acid',
+            `Beta hydroxy acids` = 'Organic Acid',
+            `Benzoic acids` = 'Organic Acid',
+            `Hydroxy acids` = 'Organic Acid',
+            `Keto acids` = 'Organic Acid',
+            `Bile acids` = 'Organic Acid',
+            `Carboxylic acids` = 'Organic Acid',
+            `Dicarboxylic acid` = 'Organic Acid',
+            `Indolyl carboxylic acids` = 'Organic Acid',
+            `Phenylpropanoic acids` = 'Organic Acid',
+            'Other'
+        )
+    }),
+    shape = sapply(Class2, function(x) {
+        switch(x,
+            `Carbohydrate Metabolism` = 'square',
+            `Energy Metabolism` = 'polygon3',
+            `Organic Acid` = 'polygon4',
+            `Lipid Metabolism` = 'polygon5',
+            `Amino Acid` = 'polygon6',
+            `Nucleotide Metabolism` = 'star4',
+            `Other` = 'circle'
+        )
+    })
+)
+
+edge.kidney <- rbind(cid_el.kidney, kegg_el.kidney)
+edge.liver <- rbind(cid_el.liver, kegg_el.liver)
+edge.serum <- rbind(cid_el.serum, kegg_el.serum)
+
+if (!file.exists('RData/30-Data.RData'))
+    save(d.kidney, d.liver, d.serum,
+         v.kidney, v.liver, v.serum,
+         edge.kidney, edge.liver, edge.serum,
+         cid_el.kidney, cid_el.liver, cid_el.serum,
+         kegg_el.kidney, kegg_el.liver, kegg_el.serum,
+         file = 'RData/30-Data.RData')
+```
+
+```{r}
+load('RData/30-Data.RData')
+```
+
+```{r, eval=F, include=T, fig.height=5, fig.width=5}
+hist(cid_el.kidney[, 'value'],
+     xlab = 'Tanimoto similarity',
+     main = 'Distribution of Tanimoto similarity in Kidney')
+
+hist(cid_el.liver[, 'value'], 
+     xlab = 'Tanimoto similarity',
+     main = 'Distribution of Tanimoto similarity in Liver')
+
+hist(cid_el.serum[, 'value'], 
+     xlab = 'Tanimoto similarity',
+     main = 'Distribution of Tanimoto similarity in Serum')
+```
+
+ [1] "typeC"          "descriptionMC"  "modelDF"        "summaryDF"      "subsetVi"      
+ [6] "pcaVarVn"       "vipVn"          "orthoVipVn"     "coefficientMN"  "xMeanVn"       
+[11] "xSdVn"          "yMeanVn"        "ySdVn"          "xZeroVarVi"     "scoreMN"       
+[16] "loadingMN"      "weightMN"       "orthoScoreMN"   "orthoLoadingMN" "orthoWeightMN" 
+[21] "cMN"            "uMN"            "weightStarMN"   "coMN"           "suppLs"        
+[26] "class" 
+
+```{r}
+#################################################################
+# triangle vertex shape
+polygonFactory <- function(sides=3) {
+    function(coords, v=NULL, params) {
+        vertex.color <- params("vertex", "color")
+        if (length(vertex.color) != 1 && !is.null(v)) {
+            vertex.color <- vertex.color[v]
+        }
+        vertex.size <- 1/200 * params("vertex", "size")
+        if (length(vertex.size) != 1 && !is.null(v)) {
+            vertex.size <- vertex.size[v]
+        }
+        
+        stars <- matrix(NA, nrow = length(vertex.size), ncol = sides)
+        for (i in 1:sides) {
+            stars[, i] <- vertex.size
+        }
+        
+        symbols(x=coords[,1], y=coords[,2], bg=vertex.color,
+                stars=stars,
+                add=TRUE, inches=FALSE)
+    }
+}
+
+starFactory <- function(norays = 4) {
+    function(coords, v=NULL, params) {
+        vertex.color <- params("vertex", "color")
+        if (length(vertex.color) != 1 && !is.null(v)) {
+            vertex.color <- vertex.color[v]
+        }
+        vertex.size  <- 1/200 * params("vertex", "size")
+        if (length(vertex.size) != 1 && !is.null(v)) {
+            vertex.size <- vertex.size[v]
+        }
+        # norays <- params("vertex", "norays")
+        if (length(norays) != 1 && !is.null(v)) {
+            norays <- norays[v]
+        }
+        
+        mapply(coords[,1], coords[,2], vertex.color, vertex.size, norays,
+               FUN=function(x, y, bg, size, nor) {
+                   symbols(x=x, y=y, bg=bg,
+                           stars=matrix(c(size,size/3), nrow=1, ncol=nor*2),
+                           add=TRUE, inches=FALSE)
+               })
+    }
+}
+
+
+polygon3 <- polygonFactory(3)
+polygon4 <- polygonFactory(4)
+polygon5 <- polygonFactory(5)
+polygon6 <- polygonFactory(6)
+star4 <- starFactory(4)
+star5 <- starFactory(5)
+star6 <- starFactory(6)
+star7 <- starFactory(7)
+
+add.vertex.shape('polygon3', 
+                 clip=vertex.shapes("circle")$clip,
+                 plot=polygon3)
+
+add.vertex.shape('polygon4', 
+                 clip=vertex.shapes("circle")$clip,
+                 plot=polygon4)
+
+add.vertex.shape('polygon5', 
+                 clip=vertex.shapes("circle")$clip,
+                 plot=polygon5)
+
+add.vertex.shape('polygon6', 
+                 clip=vertex.shapes("circle")$clip,
+                 plot=polygon6)
+
+add.vertex.shape('star4', 
+                 clip=vertex.shapes("circle")$clip,
+                 plot=star4)
+
+add.vertex.shape('star5', 
+                 clip=vertex.shapes("circle")$clip,
+                 plot=star5)
+
+add.vertex.shape('star6', 
+                 clip=vertex.shapes("circle")$clip,
+                 plot=star6)
+
+add.vertex.shape('star7', 
+                 clip=vertex.shapes("circle")$clip,
+                 plot=star7)
+
+```
+
+```{r}
+legend2 <- function (x, y = NULL, legend, fill = NULL, col = par("col"), 
+    border = "black", lty, lwd, pch, pch2, angle = 45, density = NULL, 
+    bty = "o", bg = par("bg"), box.lwd = par("lwd"), box.lty = par("lty"), 
+    box.col = par("fg"), pt.bg = NA, cex = 1, pt.cex = cex, pt.lwd = lwd, 
+    xjust = 0, yjust = 1, x.intersp = 1, y.intersp = 1, adj = c(0, 
+        0.5), text.width = NULL, text.col = par("col"), text.font = NULL, 
+    merge = do.lines && has.pch, trace = FALSE, plot = TRUE, 
+    ncol = 1, horiz = FALSE, title = NULL, inset = 0, xpd, title.col = text.col, 
+    title.adj = 0.5, seg.len = 2) 
+{
+    if (missing(legend) && !missing(y) && (is.character(y) || 
+        is.expression(y))) {
+        legend <- y
+        y <- NULL
+    }
+    mfill <- !missing(fill) || !missing(density)
+    if (!missing(xpd)) {
+        op <- par("xpd")
+        on.exit(par(xpd = op))
+        par(xpd = xpd)
+    }
+    title <- as.graphicsAnnot(title)
+    if (length(title) > 1) 
+        stop("invalid 'title'")
+    legend <- as.graphicsAnnot(legend)
+    n.leg <- if (is.call(legend)) 
+        1
+    else length(legend)
+    if (n.leg == 0) 
+        stop("'legend' is of length 0")
+    auto <- if (is.character(x)) 
+        match.arg(x, c("bottomright", "bottom", "bottomleft", 
+            "left", "topleft", "top", "topright", "right", "center"))
+    else NA
+    if (is.na(auto)) {
+        xy <- xy.coords(x, y, setLab = FALSE)
+        x <- xy$x
+        y <- xy$y
+        nx <- length(x)
+        if (nx < 1 || nx > 2) 
+            stop("invalid coordinate lengths")
+    }
+    else nx <- 0
+    xlog <- par("xlog")
+    ylog <- par("ylog")
+    rect2 <- function(left, top, dx, dy, density = NULL, angle, 
+        ...) {
+        r <- left + dx
+        if (xlog) {
+            left <- 10^left
+            r <- 10^r
+        }
+        b <- top - dy
+        if (ylog) {
+            top <- 10^top
+            b <- 10^b
+        }
+        rect(left, top, r, b, angle = angle, density = density, 
+            ...)
+    }
+    segments2 <- function(x1, y1, dx, dy, ...) {
+        x2 <- x1 + dx
+        if (xlog) {
+            x1 <- 10^x1
+            x2 <- 10^x2
+        }
+        y2 <- y1 + dy
+        if (ylog) {
+            y1 <- 10^y1
+            y2 <- 10^y2
+        }
+        segments(x1, y1, x2, y2, ...)
+    }
+    points2 <- function(x, y, ...) {
+        if (xlog) 
+            x <- 10^x
+        if (ylog) 
+            y <- 10^y
+        points(x, y, ...)
+    }
+    text2 <- function(x, y, ...) {
+        if (xlog) 
+            x <- 10^x
+        if (ylog) 
+            y <- 10^y
+        text(x, y, ...)
+    }
+    if (trace) 
+        catn <- function(...) do.call("cat", c(lapply(list(...), 
+            formatC), list("\n")))
+    cin <- par("cin")
+    Cex <- cex * par("cex")
+    if (is.null(text.width)) 
+        text.width <- max(abs(strwidth(legend, units = "user", 
+            cex = cex, font = text.font)))
+    else if (!is.numeric(text.width) || text.width < 0) 
+        stop("'text.width' must be numeric, >= 0")
+    xc <- Cex * xinch(cin[1L], warn.log = FALSE)
+    yc <- Cex * yinch(cin[2L], warn.log = FALSE)
+    if (xc < 0) 
+        text.width <- -text.width
+    xchar <- xc
+    xextra <- 0
+    yextra <- yc * (y.intersp - 1)
+    ymax <- yc * max(1, strheight(legend, units = "user", cex = cex)/yc)
+    ychar <- yextra + ymax
+    if (trace) 
+        catn("  xchar=", xchar, "; (yextra,ychar)=", c(yextra, 
+            ychar))
+    if (mfill) {
+        xbox <- xc * 0.8
+        ybox <- yc * 0.5
+        dx.fill <- xbox
+    }
+    do.lines <- (!missing(lty) && (is.character(lty) || any(lty > 
+        0))) || !missing(lwd)
+    n.legpercol <- if (horiz) {
+        if (ncol != 1) 
+            warning(gettextf("horizontal specification overrides: Number of columns := %d", 
+                n.leg), domain = NA)
+        ncol <- n.leg
+        1
+    }
+    else ceiling(n.leg/ncol)
+    has.pch <- !missing(pch) && length(pch) > 0
+    if (do.lines) {
+        x.off <- if (merge) 
+            -0.7
+        else 0
+    }
+    else if (merge) 
+        warning("'merge = TRUE' has no effect when no line segments are drawn")
+    if (has.pch) {
+        if (is.character(pch) && !is.na(pch[1L]) && nchar(pch[1L], 
+            type = "c") > 1) {
+            if (length(pch) > 1) 
+                warning("not using pch[2..] since pch[1L] has multiple chars")
+            np <- nchar(pch[1L], type = "c")
+            pch <- substr(rep.int(pch[1L], np), 1L:np, 1L:np)
+        }
+        if (!is.character(pch)) 
+            pch <- as.integer(pch)
+    }
+    if (is.na(auto)) {
+        if (xlog) 
+            x <- log10(x)
+        if (ylog) 
+            y <- log10(y)
+    }
+    if (nx == 2) {
+        x <- sort(x)
+        y <- sort(y)
+        left <- x[1L]
+        top <- y[2L]
+        w <- diff(x)
+        h <- diff(y)
+        w0 <- w/ncol
+        x <- mean(x)
+        y <- mean(y)
+        if (missing(xjust)) 
+            xjust <- 0.5
+        if (missing(yjust)) 
+            yjust <- 0.5
+    }
+    else {
+        h <- (n.legpercol + !is.null(title)) * ychar + yc
+        w0 <- text.width + (x.intersp + 1) * xchar
+        if (mfill) 
+            w0 <- w0 + dx.fill
+        if (do.lines) 
+            w0 <- w0 + (seg.len + x.off) * xchar
+        w <- ncol * w0 + 0.5 * xchar
+        if (!is.null(title) && (abs(tw <- strwidth(title, units = "user", 
+            cex = cex) + 0.5 * xchar)) > abs(w)) {
+            xextra <- (tw - w)/2
+            w <- tw
+        }
+        if (is.na(auto)) {
+            left <- x - xjust * w
+            top <- y + (1 - yjust) * h
+        }
+        else {
+            usr <- par("usr")
+            inset <- rep_len(inset, 2)
+            insetx <- inset[1L] * (usr[2L] - usr[1L])
+            left <- switch(auto, bottomright = , topright = , 
+                right = usr[2L] - w - insetx, bottomleft = , 
+                left = , topleft = usr[1L] + insetx, bottom = , 
+                top = , center = (usr[1L] + usr[2L] - w)/2)
+            insety <- inset[2L] * (usr[4L] - usr[3L])
+            top <- switch(auto, bottomright = , bottom = , bottomleft = usr[3L] + 
+                h + insety, topleft = , top = , topright = usr[4L] - 
+                insety, left = , right = , center = (usr[3L] + 
+                usr[4L] + h)/2)
+        }
+    }
+    if (plot && bty != "n") {
+        if (trace) 
+            catn("  rect2(", left, ",", top, ", w=", w, ", h=", 
+                h, ", ...)", sep = "")
+        rect2(left, top, dx = w, dy = h, col = bg, density = NULL, 
+            lwd = box.lwd, lty = box.lty, border = box.col)
+    }
+    xt <- left + xchar + xextra + (w0 * rep.int(0:(ncol - 1), 
+        rep.int(n.legpercol, ncol)))[1L:n.leg]
+    yt <- top - 0.5 * yextra - ymax - (rep.int(1L:n.legpercol, 
+        ncol)[1L:n.leg] - 1 + !is.null(title)) * ychar
+    if (mfill) {
+        if (plot) {
+            if (!is.null(fill)) 
+                fill <- rep_len(fill, n.leg)
+            rect2(left = xt, top = yt + ybox/2, dx = xbox, dy = ybox, 
+                col = fill, density = density, angle = angle, 
+                border = border)
+        }
+        xt <- xt + dx.fill
+    }
+    if (plot && (has.pch || do.lines)) 
+        col <- rep_len(col, n.leg)
+    if (missing(lwd) || is.null(lwd)) 
+        lwd <- par("lwd")
+    if (do.lines) {
+        if (missing(lty) || is.null(lty)) 
+            lty <- 1
+        lty <- rep_len(lty, n.leg)
+        lwd <- rep_len(lwd, n.leg)
+        ok.l <- !is.na(lty) & (is.character(lty) | lty > 0) & 
+            !is.na(lwd)
+        if (trace) 
+            catn("  segments2(", xt[ok.l] + x.off * xchar, ",", 
+                yt[ok.l], ", dx=", seg.len * xchar, ", dy=0, ...)")
+        if (plot) 
+            segments2(xt[ok.l] + x.off * xchar, yt[ok.l], dx = seg.len * 
+                xchar, dy = 0, lty = lty[ok.l], lwd = lwd[ok.l], 
+                col = col[ok.l])
+        xt <- xt + (seg.len + x.off) * xchar
+    }
+    if (has.pch) {
+        pch <- rep_len(pch, n.leg)
+        pt.bg <- rep_len(pt.bg, n.leg)
+        pt.cex <- rep_len(pt.cex, n.leg)
+        pt.lwd <- rep_len(pt.lwd, n.leg)
+        ok <- !is.na(pch)
+        if (!is.character(pch)) {
+            ok <- ok & (pch >= 0 | pch <= -32)
+        }
+        else {
+            ok <- ok & nzchar(pch)
+        }
+        x1 <- (if (merge && do.lines) 
+            xt - (seg.len/2) * xchar
+        else xt)[ok]
+        y1 <- yt[ok]
+        if (trace) 
+            catn("  points2(", x1, ",", y1, ", pch=", pch[ok], 
+                ", ...)")
+        if (plot) {
+            # points2(x1, y1, pch = pch[ok], col = col[ok], cex = pt.cex[ok], 
+            #     bg = pt.bg[ok], lwd = pt.lwd[ok])
+            for (j in 1:length(x1)) {
+                # pch has length n.leg
+                if (pch2[j] == 'circle') {
+                    points2(x1[j], y1[j], 
+                            pch = 21, col = col[j], cex = pt.cex[j], 
+                            bg = pt.bg[j], lwd = pt.lwd[j])
+                    
+                } else if (pch2[j] == 'square') {
+                    points2(x1[j], y1[j], 
+                            pch = 22, col = col[j], cex = pt.cex[j], 
+                            bg = pt.bg[j], lwd = pt.lwd[j])
+                    
+                } else if (stringr::str_detect(pch2[j], '^polygon')) {
+                    sides <- stringr::str_extract(pch2[j], '[0-9]+$') %>% 
+                        as.numeric
+                    
+                    vertex.size <- 1/200 * 6
+                    
+                    stars <- matrix(vertex.size, nrow = 1, ncol = sides)
+                    
+                    symbols(x=x1[j], y=y1[j], fg = col[j], bg=pt.bg[j],
+                            stars=stars,
+                            add=TRUE, inches=FALSE)
+                    
+                } else if (stringr::str_detect(pch2[j], '^star')) {
+                    nrays <- stringr::str_extract(pch2[j], '[0-9]+$') %>% 
+                        as.numeric
+                    
+                    size <- 1/200 * 6
+                    
+                    symbols(x=x1[j], y=y1[j], fg = col[j], bg=pt.bg[j],
+                            stars=matrix(c(size,size/3), nrow=1, ncol=nrays*2),
+                            add=TRUE, inches=FALSE)
+                }
+            }
+        }
+    }
+    xt <- xt + x.intersp * xchar
+    if (plot) {
+        if (!is.null(title)) 
+            text2(left + w * title.adj, top - ymax, labels = title, 
+                adj = c(title.adj, 0), cex = cex, col = title.col)
+        text2(xt, yt, labels = legend, adj = adj, cex = cex, 
+            col = text.col, font = text.font)
+    }
+    invisible(list(rect = list(w = w, h = h, left = left, top = top), 
+        text = list(x = xt, y = yt)))
+}
+```
+
+- P < 0.05, Fold > 1: increasing
+- P < 0.05, Fold < 1: decreasing
+
+```{r, eval=F}
+edge0 <- edge.kidney
+df0 <- d.kidney
+df1 <- v.kidney
+
+edge0 <- edge0 %>% mutate(
+    from = df0[match(from, df0[, 'PubChem']), 'name'],
+    to = df0[match(to, df0[, 'PubChem']), 'name'],
+    color = ifelse(type == 'Structural', 'gray', 
+                   ifelse(type == 'Biochemical', 'navyblue', 'red'))
+)
+
+g <- igraph::graph.data.frame(edge0, directed = FALSE)
+
+comps <- combn(c('C', 'D', 'M', 'O', 'H'), 2)
+
+pdf('output/30/network_kidney.pdf', w = 16, h = 10)
+
+for (i in 1:ncol(comps)) {
+    a <- comps[1, i]
+    b <- comps[2, i]
+    p <- df0[, paste0(a, '-', b)]
+    names(p) <- df0[, 'name']
+    
+    f <- df0[, paste0(b, '/', a)]
+    
+    v.color <- ifelse(
+        f > 1 & p < 0.05,
+        'red',
+        ifelse(
+            f < 1 & p < 0.05,
+            'green',
+            'gray'
+        )
+    )
+    names(v.color) <- df0[, 'name']
+    
+    v.shape <- df1[, 'shape']
+    names(v.shape) <- df0[, 'name']
+    
+    V(g)$color <- v.color[attr(V(g), 'name')]
+    V(g)$label.cex <- 0.8
+    V(g)$label.color <- 'black'
+    # V(g)$label.degree <- pi
+    V(g)$size <- -log10(p)[attr(V(g), 'name')] * 2 + 2
+    V(g)$shape <- v.shape[attr(V(g), 'name')]
+    ## shape size and name length
+    vertex.label.dist <- -log10(p)[attr(V(g), 'name')] / 5 + 
+        nchar(attr(V(g), 'name')) / 9 + 0.4
+    
+    E(g)$color <- edge0$color
+    
+    # apply layout
+    set.seed(5)
+    l <- layout_with_fr(g, weights = rep(0.02, length(E(g))))
+    
+
+    
+    
+    # `Carbohydrate Metabolism` = 'square',
+    # `Energy Metabolism` = 'polygon3',
+    # `Organic Acid` = 'polygon4',
+    # `Lipid Metabolism` = 'polygon5',
+    # `Amino Acid` = 'polygon6',
+    # `Nucleotide Metabolism` = 'star4',
+    # `Other` = 'circle'
+    
+    legend.labels <- c(
+        'Decrease',
+        'Increase',
+        'Non significant',
+        'Carbohydrate Metabolism',
+        'Energy Metabolism',
+        'Organic Acid',
+        'Lipid Metabolism',
+        'Amino Acid',
+        'Nucleotide Metabolism',
+        'Other'
+    )
+    
+    pch2 <- c(
+        'square',
+        'square',
+        'square',
+        'square',
+        'polygon3',
+        'polygon4',
+        'polygon5',
+        'polygon6',
+        'star4',
+        'circle'
+    )
+    
+    col <- c('white', 'white', 'white',
+             'black', 'black', 'black', 'black', 'black', 'black', 'black')
+    
+    pt.bg <- c('green', 'red', 'gray',
+               'white', 'white', 'white', 'white', 'white', 'white', 'white')
+    
+    plot(
+        g, layout = l,
+        vertex.label.dist=vertex.label.dist,
+        vertex.label.degree = 0,
+        main = paste('Kidney', a, '-', b)
+    )
+    
+    legend.out <- legend2(
+        x=1.4, y=0.8, 
+        y.intersp = 1,
+        legend = legend.labels, pch = 0, pch2=pch2,
+        pt.bg = pt.bg,
+        col=col, pt.cex=3, cex=1.2, bty="n", ncol=1
+    )
+    
+    legend(
+        x=1.3, y = 1,
+        y.intersp = 1,
+        legend = c('Structural', 'Biochemical'),
+        col = c('gray', 'navyblue'),
+        lwd = 2, lty = c(1, 1), bty = 'n', cex = 1.2
+    )
+}
+
+dev.off()
+```
+
+
+```{r, eval=F}
+edge0 <- edge.liver
+df0 <- d.liver
+df1 <- v.liver
+
+edge0 <- edge0 %>% mutate(
+    from = df0[match(from, df0[, 'PubChem']), 'name'],
+    to = df0[match(to, df0[, 'PubChem']), 'name'],
+    color = ifelse(type == 'Structural', 'gray', 
+                   ifelse(type == 'Biochemical', 'navyblue', 'red'))
+)
+
+g <- igraph::graph.data.frame(edge0, directed = FALSE)
+
+comps <- combn(c('C', 'D', 'M', 'O', 'H'), 2)
+
+pdf('output/30/network_liver.pdf', w = 16, h = 10)
+
+for (i in 1:ncol(comps)) {
+    a <- comps[1, i]
+    b <- comps[2, i]
+    p <- df0[, paste0(a, '-', b)]
+    names(p) <- df0[, 'name']
+    
+    f <- df0[, paste0(b, '/', a)]
+    
+    v.color <- ifelse(
+        f > 1 & p < 0.05,
+        'red',
+        ifelse(
+            f < 1 & p < 0.05,
+            'green',
+            'gray'
+        )
+    )
+    names(v.color) <- df0[, 'name']
+    
+    v.shape <- df1[, 'shape']
+    names(v.shape) <- df0[, 'name']
+    
+    V(g)$color <- v.color[attr(V(g), 'name')]
+    V(g)$label.cex <- 0.8
+    V(g)$label.color <- 'black'
+    V(g)$label.degree <- pi
+    V(g)$size <- -log10(p)[attr(V(g), 'name')] * 2 + 2
+    V(g)$shape <- v.shape[attr(V(g), 'name')]
+    ## shape size and name length
+    vertex.label.dist <- -log10(p)[attr(V(g), 'name')] / 5 + 
+        nchar(attr(V(g), 'name')) / 9 + 0.4
+    
+    E(g)$color <- edge0$color
+    
+    # apply layout
+    set.seed(5)
+    l <- layout_with_fr(g, weights = rep(0.02, length(E(g))))
+    
+
+    
+    
+    # `Carbohydrate Metabolism` = 'square',
+    # `Energy Metabolism` = 'polygon3',
+    # `Organic Acid` = 'polygon4',
+    # `Lipid Metabolism` = 'polygon5',
+    # `Amino Acid` = 'polygon6',
+    # `Nucleotide Metabolism` = 'star4',
+    # `Other` = 'circle'
+    
+    legend.labels <- c(
+        'Decrease',
+        'Increase',
+        'Non significant',
+        'Carbohydrate Metabolism',
+        'Energy Metabolism',
+        'Organic Acid',
+        'Lipid Metabolism',
+        'Amino Acid',
+        'Nucleotide Metabolism',
+        'Other'
+    )
+    
+    pch2 <- c(
+        'square',
+        'square',
+        'square',
+        'square',
+        'polygon3',
+        'polygon4',
+        'polygon5',
+        'polygon6',
+        'star4',
+        'circle'
+    )
+    
+    col <- c('white', 'white', 'white',
+             'black', 'black', 'black', 'black', 'black', 'black', 'black')
+    
+    pt.bg <- c('green', 'red', 'gray',
+               'white', 'white', 'white', 'white', 'white', 'white', 'white')
+    
+    plot(
+        g, layout = l,
+        vertex.label.dist=vertex.label.dist,
+        vertex.label.degree = 0,
+        main = paste('Liver', a, '-', b)
+    )
+    
+    legend.out <- legend2(
+        x=1.4, y=0.8, 
+        y.intersp = 1,
+        legend = legend.labels, pch = 0, pch2=pch2,
+        pt.bg = pt.bg,
+        col=col, pt.cex=3, cex=1.2, bty="n", ncol=1
+    )
+    
+    legend(
+        x=1.3, y = 1,
+        y.intersp = 1,
+        legend = c('Structural', 'Biochemical'),
+        col = c('gray', 'navyblue'),
+        lwd = 2, lty = c(1, 1), bty = 'n', cex = 1.2
+    )
+}
+
+dev.off()
+```
+
+
+```{r, eval=F}
+edge0 <- edge.serum
+df0 <- d.serum
+df1 <- v.serum
+
+edge0 <- edge0 %>% mutate(
+    from = df0[match(from, df0[, 'PubChem']), 'name'],
+    to = df0[match(to, df0[, 'PubChem']), 'name'],
+    color = ifelse(type == 'Structural', 'gray', 
+                   ifelse(type == 'Biochemical', 'navyblue', 'red'))
+)
+
+g <- igraph::graph.data.frame(edge0, directed = FALSE)
+
+comps <- combn(c('C', 'D', 'M', 'O', 'H'), 2)
+
+pdf('output/30/network_serum.pdf', w = 16, h = 10)
+
+for (i in 1:ncol(comps)) {
+    a <- comps[1, i]
+    b <- comps[2, i]
+    p <- df0[, paste0(a, '-', b)]
+    names(p) <- df0[, 'name']
+    
+    f <- df0[, paste0(b, '/', a)]
+    
+    v.color <- ifelse(
+        f > 1 & p < 0.05,
+        'red',
+        ifelse(
+            f < 1 & p < 0.05,
+            'green',
+            'gray'
+        )
+    )
+    names(v.color) <- df0[, 'name']
+    
+    v.shape <- df1[, 'shape']
+    names(v.shape) <- df0[, 'name']
+    
+    V(g)$color <- v.color[attr(V(g), 'name')]
+    V(g)$label.cex <- 0.8
+    V(g)$label.color <- 'black'
+    V(g)$label.degree <- pi
+    V(g)$size <- -log10(p)[attr(V(g), 'name')] * 2 + 2
+    V(g)$shape <- v.shape[attr(V(g), 'name')]
+    ## shape size and name length
+    vertex.label.dist <- -log10(p)[attr(V(g), 'name')] / 5 + 
+        nchar(attr(V(g), 'name')) / 9 + 0.4
+    
+    E(g)$color <- edge0$color
+    
+    # apply layout
+    set.seed(5)
+    l <- layout_with_fr(g, weights = rep(0.02, length(E(g))))
+    
+
+    
+    
+    # `Carbohydrate Metabolism` = 'square',
+    # `Energy Metabolism` = 'polygon3',
+    # `Organic Acid` = 'polygon4',
+    # `Lipid Metabolism` = 'polygon5',
+    # `Amino Acid` = 'polygon6',
+    # `Nucleotide Metabolism` = 'star4',
+    # `Other` = 'circle'
+    
+    legend.labels <- c(
+        'Decrease',
+        'Increase',
+        'Non significant',
+        'Carbohydrate Metabolism',
+        'Energy Metabolism',
+        'Organic Acid',
+        'Lipid Metabolism',
+        'Amino Acid',
+        'Nucleotide Metabolism',
+        'Other'
+    )
+    
+    pch2 <- c(
+        'square',
+        'square',
+        'square',
+        'square',
+        'polygon3',
+        'polygon4',
+        'polygon5',
+        'polygon6',
+        'star4',
+        'circle'
+    )
+    
+    col <- c('white', 'white', 'white',
+             'black', 'black', 'black', 'black', 'black', 'black', 'black')
+    
+    pt.bg <- c('green', 'red', 'gray',
+               'white', 'white', 'white', 'white', 'white', 'white', 'white')
+    
+    plot(
+        g, layout = l,
+        vertex.label.dist=vertex.label.dist,
+        vertex.label.degree = 0,
+        main = paste('Serum', a, '-', b)
+    )
+    
+    legend.out <- legend2(
+        x=1.4, y=0.8, 
+        y.intersp = 1,
+        legend = legend.labels, pch = 0, pch2=pch2,
+        pt.bg = pt.bg,
+        col=col, pt.cex=3, cex=1.2, bty="n", ncol=1
+    )
+    
+    legend(
+        x=1.3, y = 1,
+        y.intersp = 1,
+        legend = c('Structural', 'Biochemical'),
+        col = c('gray', 'navyblue'),
+        lwd = 2, lty = c(1, 1), bty = 'n', cex = 1.2
+    )
+}
+
+dev.off()
+```

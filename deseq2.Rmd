@@ -1,0 +1,105 @@
+# 110 lipids
+
+
+
+```{r, include=F, echo=F, message=F, warnings=F}
+options(java.parameters = '-Xmx8000m')
+source('Rscript/setup.R')
+source('Rscript/functions.R')
+source('Rscript/app_functions.R')
+source('rscript/pathway_funs.R', encoding = 'UTF-8')
+
+
+options(useFancyQuotes = FALSE)
+
+
+knitr::opts_chunk$set(
+  cache = T,
+  message = F,
+  dpi = 300
+)
+
+library(plyr)
+library(ggplot2)
+library(magrittr)
+# library(MetaboAnalystR)
+library(kableExtra)
+library(dplyr)
+
+library(extrafont)
+loadfonts(device = 'win', quiet = T)
+par(family = 'Liberation')
+windowsFonts(
+  serif = 'Liberation Serif',
+  sans = 'Liberation Sans',
+  mono = 'Liberation Mono'
+)
+
+par(family = 'sans')
+
+set.seed(1)
+
+prefix <- '210'
+output.dir <- file.path('output', prefix)
+Sys.setlocale("LC_ALL","Chinese")
+
+if (!dir.exists(output.dir)) {
+    dir.create(output.dir, recursive = T)
+}
+```
+
+## DESeq2
+
+genes x samples: 18753 x 12
+
+Ref
+
+1. https://www.jianshu.com/p/a27dce71f6ea
+
+Use gene counts from gene_expression.xls.
+
+```{r}
+d.gene.counts <- readr::read_delim(
+  'data/BGI_F21FTSECKF0249_PEOaobdT/Expression/gene_expression.xls',
+  delim = '\t'
+  ) %>%
+  select(
+    gene_id, gene_symbol, starts_with('read')
+  ) %>%
+  mutate(
+    across(starts_with('read'), floor)
+  )
+
+colData <- data.frame(
+  row.names = colnames(d.gene.counts)[-1:-2],
+  group = rep(c('Olig2OPC', 'VectorOPC'), each = 6) %>% 
+    factor(levels = c('VectorOPC', 'Olig2OPC'))
+)
+
+dds <- DESeq2::DESeqDataSetFromMatrix(
+  countData = d.gene.counts[, -1:-2],
+  colData = colData,
+  design = ~group
+) %>% 
+  DESeq2::DESeq()
+
+dds.res <- DESeq2::results(dds)@listData %>%
+  data.frame(
+    gene_id = d.gene.counts$gene_id,
+    gene_symbol = d.gene.counts$gene_symbol,
+    .
+  ) %>%
+  arrange(
+    padj
+  )
+
+d.DE <- dds.res %>%
+  filter(
+    padj <= 0.05
+  )
+
+write.csv(dds.res, file = 'output/210/DESeq2_results_all.csv', row.names = F)
+write.csv(d.DE, file = 'output/210/DESeq2_results_padj_lt_0.05.csv', row.names = F)
+
+```
+

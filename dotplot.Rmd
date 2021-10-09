@@ -1,0 +1,260 @@
+---
+title: "2020-155"
+author: "leump"
+date: "2020/12/11"
+output: html_document
+---
+
+```{r}
+library(ComplexHeatmap)
+
+setwd('/Users/leump/Desktop/R/Github/Plot/')
+
+d10 <- read.csv("/Users/leump/Desktop/R/Github/Plot/data/2020-155-B-01/代谢组/data.csv", 
+                header=T, row.names = 1, check.names = FALSE)
+
+s10 <- read.csv("/Users/leump/Desktop/R/Github/Plot/data/2020-155-B-01/代谢组/sample.csv", 
+                header=T, row.names = 1, check.names = FALSE)
+
+v10 <- read.csv("/Users/leump/Desktop/R/Github/Plot/data/2020-155-B-01/代谢组/VIP_Group1_Group2.csv", 
+                header=T, row.names = 1, check.names = FALSE)
+
+var10 <- read.csv("/Users/leump/Desktop/R/Github/Plot/data/2020-155-B-01/代谢组/var.csv", 
+                header=T, row.names = 1, check.names = FALSE)
+
+
+selected <- c(rownames(v10)[1:25])
+d11 <- d10[ ,selected]
+var11 <- var10[selected, ]
+
+s11 <- s10[stringr::str_detect(s10$Group, 'Group1') | stringr::str_detect(s10$Group, 'Group2'), ]
+
+selected_row <- c(rownames(s11))
+d11 <- d11[selected_row,]
+
+## scale
+scale_rows = function(x){
+  m = apply(x, 1, mean, na.rm = T)
+  s = apply(x, 1, sd, na.rm = T)
+  return((x - m) / s)
+}
+
+scale_mat = function(mat, scale){
+  if(!(scale %in% c("none", "row", "column"))){
+      stop("scale argument shoud take values: 'none', 'row' or 'column'")
+  }
+  mat = switch(scale, 
+               none = mat, 
+               column = scale_rows(mat), 
+               row = t(scale_rows(t(mat)))
+               )
+  return(mat)
+}
+
+d <- scale_mat(d11, "row")
+      
+
+
+
+
+
+write.csv(d11, 'data/代谢组/heatmap/Group1_Group2_heatmap_data.csv')
+write.csv(s11, 'data/代谢组/heatmap/Group1_Group2_heatmap_sample.csv')
+write.csv(var11, 'data/代谢组/heatmap/Group1_Group2_heatmap_var.csv')
+
+
+gg_color_hue <- function(n) {
+  set.seed(123)
+  hues = sample(15:375, n + 1 , replace=T)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+
+col_cols <- gg_color_hue(nlevels(factor(s11$Group)))
+
+
+ha.col <- HeatmapAnnotation(Group = s11$Group,
+                            col = list(Group = structure(col_cols, 
+                                                         names = levels(factor(s11$Group))
+                            )),
+                            annotation_name_gp = gpar(fontface = 'bold'),
+                            annotation_legend_param = list(Group = list(title = "Group",
+                                                                        title_position = 'topcenter'
+                            ))
+)
+
+cairo_pdf('heatmap_1v2.pdf', family = font_family)
+
+Heatmap(
+  t(scale(d11)),
+  name = 'SD',
+  col = circlize::colorRamp2(c(-3, 0, 3), c("navyblue", "white", "firebrick")),
+  top_annotation = ha.col,
+  cluster_rows = T,
+  cluster_columns = T,
+  ## cannot set hjust for column names
+  heatmap_legend_param = list(legend_height = unit(2, 'in')
+  ),
+  show_column_names = FALSE,
+  # bottom_annotation = HeatmapAnnotation(
+  #   text = anno_text(rownames(d), rot = 270, offset = unit(1, "npc"), just = "left"),
+  #   annotation_height = max_text_width(rownames(d11))
+  # )
+)
+
+dev.off()
+
+```
+
+```{r}
+library(plyr)
+library(ggplot2)
+library(magrittr)
+# library(MetaboAnalystR)
+library(kableExtra)
+library(data.table)
+library(gridExtra)
+library(grid)
+
+
+
+d10 <- read.csv("/Users/leump/Desktop/Plot/data/2020-155-B-01/脂质组/data.csv", 
+                header=T, row.names = 1, check.names = FALSE)
+
+s10 <- read.csv("/Users/leump/Desktop/Plot/data/2020-155-B-01/脂质组/sample.csv", 
+                header=T, row.names = 1, check.names = FALSE)
+
+v10 <- read.csv("/Users/leump/Desktop/Plot/data/2020-155-B-01/脂质组/VIP_Group1_Group2.csv", 
+                header=T, row.names = 1, check.names = FALSE)
+
+selected <- c(rownames(v10)[1:15])
+
+v11 <- as.data.frame(v10[selected, ]) 
+colnames(v11) <- 'VIP' 
+rownames(v11) <- c(selected)
+
+
+df <- data.frame(y=v11$VIP, x=rownames(v11))
+
+
+
+p1 <- ggplot(df, aes(y=y, 
+                     x=reorder(x,y,na.rm=TRUE))) +
+        geom_point() +
+        geom_vline(aes(xintercept=x), size=0.1, linetype=1) +
+        coord_flip() + 
+        labs(x = "", y = "VIP Scores") + 
+        theme_bw() + 
+        theme(panel.grid =element_blank()) + ## 删去网格线
+        theme(axis.ticks.y = element_blank()) + ## 设置 axis.ticks.y 则只删去 Y 轴的刻度线，X 轴同理
+        theme(axis.title.x = element_text(size = 8, vjust = -2)) +
+        theme(panel.grid.minor.y=element_line(color="grey", linetype=1),#次水平网格应该是灰色的虚线
+              panel.grid.minor.x=element_blank()) #垂直网格不输出
+p1
+
+## 分组 12 14 12
+group <- factor(s10$Group[c(1:26)],
+                levels =c("Group1",
+                          "Group2"
+                          ))
+
+d11 <- d10[ ,selected]
+s11 <- s10[stringr::str_detect(s10$Group, 'Group1') | stringr::str_detect(s10$Group, 'Group3'), ]
+selected_row <- c(rownames(s11))
+d12 <- d11[selected_row,]
+
+scale_rows = function(x){
+  m = apply(x, 1, mean, na.rm = T)
+  s = apply(x, 1, sd, na.rm = T)
+  return((x - m) / s)
+}
+
+scale_mat = function(mat, scale){
+  if(!(scale %in% c("none", "row", "column"))){
+      stop("scale argument shoud take values: 'none', 'row' or 'column'")
+  }
+  mat = switch(scale, 
+               none = mat, 
+               column = scale_rows(mat), 
+               row = t(scale_rows(t(mat)))
+               )
+  return(mat)
+}
+
+d13 <- as.data.frame(scale_mat(d11, "row")) %>% t() ##scale 转置
+
+## 求每组平均值
+d13_mean <- apply(d13, 1, function(x){
+  plyr::vaggregate(x, group, mean)
+}) %>% t() 
+colnames(d13_mean) <- levels(group) # 每列组别名称
+
+for (i in 1:15) {
+if (d13_mean[i,1] > d13_mean[i,2]){
+    d13_mean[i,1] <- 1
+    d13_mean[i,2] <- -1
+} else {
+    d13_mean[i,1] <- -1
+    d13_mean[i,2] <- 1
+ }
+}
+
+d13_melt_mean <- reshape2::melt(d13_mean) # 格式转换
+
+p2 <- ggplot(d13_melt_mean, aes(x = Var2,y = Var1)) + 
+  geom_tile(aes(fill=value, height=0.6, width=0.8), colour = "grey50", size = 0.5) +
+  scale_x_discrete(position = "top") +
+  coord_equal(ratio = 1.1) + 
+  scale_fill_gradient2(high = 'red', mid = 'white', low = 'blue') +
+  labs(x = "", y = "") + 
+  theme_bw() +
+  theme(axis.text = element_blank()) +  ## 删去所有刻度标签
+  theme(panel.grid =element_blank()) +  ## 删去网格线
+  theme(axis.ticks = element_blank()) +  ## 删去所有刻度线
+  theme(panel.border = element_blank()) +   ## 删去外层边框
+  theme(axis.text.x = element_text(size = 10, vjust = 0.5, hjust = 0.1, angle = 45)) +
+  theme(legend.text = element_blank()) +
+  theme(legend.key.size = unit(10, "pt")) + ## 热图比例
+  guides(fill = guide_colorbar(title = 'High',
+                               barwidth = unit(0.3, "cm"), ##图例的宽度
+                               barheight = unit(3, "cm"), ##图例的高度
+                               raster = F, ## 如果为TRUE，则颜色条将呈现为栅格对象。 如果为FALSE，则颜色条呈现为一组矩形
+  )) +
+  annotation_custom(grob = textGrob("Low"),xmin = 6, ymin = -6.5)
+
+gt <- ggplot_gtable(ggplot_build(p2))
+gt$layout$clip[gt$layout$name=="panel"] <- "off"
+grid.draw(gt)
+plot(gt)
+
+library(cowplot)
+
+
+p3 <- plot_grid(p1, gt, rel_widths = c(4,1), align = "h")
+p3
+
+output.dir <- 'output/dotplot'
+
+ggsave(file.path(output.dir, 'Group1_Group2_dotplot.pdf'),
+       plot = p3,  dpi = 300, compress = 'lzw+p', width = 9, height = 5)
+
+ggsave(file.path(output.dir, 'Group1_Group2_dotplot.tiff'),
+       plot = p3,  dpi = 300, compress = 'lzw+p', width = 9, height = 5)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

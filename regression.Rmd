@@ -1,0 +1,447 @@
+# Analysis 20200917
+
+Linear regression and logistic regression adjusting for age.
+
+Scale data before removing S1.
+
+```{r, include=F, echo=F, message=F, warnings=F}
+source('Rscript/setup.R')
+source('Rscript/functions.R')
+source('Rscript/app_functions.R')
+source('rscript/pathway_funs.R', encoding = 'UTF-8')
+
+
+options(useFancyQuotes = FALSE)
+options(java.parameters = '-Xmx8000m')
+
+knitr::opts_chunk$set(
+  cache = T,
+  message = F,
+  dpi = 300
+)
+
+library(plyr)
+library(ggplot2)
+library(magrittr)
+# library(MetaboAnalystR)
+library(kableExtra)
+library(data.table)
+
+
+library(extrafont)
+# loadfonts(device = 'win', quiet = T)
+# par(family = 'Liberation')
+# windowsFonts(
+#   serif = 'Liberation Serif',
+#   sans = 'Liberation Sans',
+#   mono = 'Liberation Mono'
+# )
+
+par(family = 'sans')
+
+set.seed(1)
+
+prefix <- 'regression'
+output.dir <- file.path('output', prefix)
+# Sys.setlocale("LC_ALL","Chinese")
+
+if (!dir.exists(output.dir)) {
+    dir.create(output.dir, recursive = T)
+}
+```
+
+```{r}
+file10 <- 'data/20200917/20200917 2019-088-A-07 WY aortic tissues for Zhu Hao.xlsx'
+
+## 12 461
+d10 <- XLConnect::readWorksheetFromFile(
+  file10, sheet = 'umolperg',
+  rownames = 1
+) %>% t %>% as.data.frame
+
+## 12 461
+d20 <- XLConnect::readWorksheetFromFile(
+  file10, sheet = 'MFP',
+  rownames = 1
+) %>% t %>% as.data.frame
+
+s10 <- XLConnect::readWorksheetFromFile(
+  file10, sheet = 'CLINIC',
+  rownames = 1
+)
+
+testthat::expect_equal(
+  rownames(d10), rownames(s10)
+)
+
+testthat::expect_equal(
+  rownames(d20), rownames(s10)
+)
+```
+
+## umolperg
+
+### glm
+
+```{r}
+## 有多个变量可以作为因变量的时候，为了代码尽可能保持一致
+## 把实际变量名用group_var来替换
+# group_var <- expr(Fibrosis_c_0_12_34)
+
+## 把脂质数据scale以后变成标准差，均值为0，方差为1
+d0 <- d10 %>% scale
+
+# 第一列scale
+# dtest <- d10[ ,1] %>% scale
+## 检查组学数据和临床数据的样本名字一致
+testthat::expect_equal(
+  rownames(d0), rownames(s10)
+)
+## 如果有些样本有确实数据，去掉有确实的样本
+# remove NA
+s0 <- s10[, c('Group', 'Age')] %>% 
+  dplyr::mutate(
+    Group = factor(Group, levels = c('NO MAE', 'MAE'))
+  )
+
+
+
+## 合并组学数据和临床数据
+## group 替换成我们要的变量
+df0 <- cbind(s0, d0) %>% dplyr::filter(
+  !is.na(Age)
+)
+
+## 合并以后的组学数据的列从 ncol(s0) + 1到ncol(df0) - 1
+start.col <- ncol(s0) + 1
+end.col <- ncol(df0)
+
+## 每一列做回归
+dt.fit.lm <- lapply(colnames(df0)[start.col:end.col], function(x) {
+  ## 逻辑回归
+  ## 线性回归的话 
+  # fit.lm <- lm(
+  #   as.formula(sprintf('`%s` ~ group + Age + Gender + BMI ', x)),
+  #   data = df0
+  # )
+  fit.lm <- glm(
+    as.formula(sprintf('Group ~ `%s` + Age', x)),
+    family = binomial(link = 'logit'),
+    data = df0
+  )
+  ## 回归的结果整理成数据框
+  out <- broom::tidy(fit.lm)
+  
+  ## 如果是线性回归这里需要改
+  out$term[2] <- 'Lipid'
+  out[, 'Metabolite'] <- x
+  out
+}) %>% do.call(rbind, .) %>% setDT
+
+## 计算置信区间
+dt.gg <- dt.fit.lm[
+  , c('CI.low', 'CI.high') := list(
+    estimate - 1.96 * std.error,
+    estimate + 1.96 * std.error
+  )
+][
+  , p.value := as.numeric(p.value)
+][
+  , FDR := as.numeric(NA)
+]
+
+## FDR对每一个变量来计算而不是对所有的变量一起计算
+## 比如所有的脂质100个，把100个脂质的p值一起计算FDR
+## age的100个P值一起计算FDR
+for (term.i in unique(dt.gg[, term])) {
+  set(dt.gg, 
+      i = dt.gg[, which(term == term.i)], 'FDR', 
+      dt.gg[term == term.i, p.adjust(p.value, method = 'fdr')])
+}
+
+
+file.excel <- file.path(
+  output.dir,
+  'Logistic-regression-N11V461-umolperg.xlsx'
+)
+
+if(!file.exists(file.excel)) {
+  XLConnect::writeWorksheetToFile(
+    file.excel,
+    data = dt.gg,
+    sheet = 'Sheet1'
+  )
+}
+```
+
+### lm
+
+```{r}
+## 有多个变量可以作为因变量的时候，为了代码尽可能保持一致
+## 把实际变量名用group_var来替换
+# group_var <- expr(Fibrosis_c_0_12_34)
+
+## 把脂质数据scale以后变成标准差，均值为0，方差为1
+d0 <- d10 %>% scale
+
+## 检查组学数据和临床数据的样本名字一致
+testthat::expect_equal(
+  rownames(d0), rownames(s10)
+)
+
+## 如果有些样本有确实数据，去掉有确实的样本
+# remove NA
+s0 <- s10[, c('Group', 'Age')] %>% 
+  dplyr::mutate(
+    Group = factor(Group, levels = c('NO MAE', 'MAE'))
+  )
+
+
+
+## 合并组学数据和临床数据
+## group 替换成我们要的变量
+df0 <- cbind(s0, d0) %>% dplyr::filter(
+  !is.na(Age)
+)
+
+## 合并以后的组学数据的列从 ncol(s0) + 1到ncol(df0) - 1
+start.col <- ncol(s0) + 1
+end.col <- ncol(df0)
+
+## 每一列做回归
+dt.fit.lm <- lapply(colnames(df0)[start.col:end.col], function(x) {
+  ## 线性回归
+  fit.lm <- lm(
+    as.formula(sprintf('`%s` ~ Group + Age', x)),
+    data = df0
+  )
+  ## 回归的结果整理成数据框
+  out <- broom::tidy(fit.lm)
+  
+  ## 如果是线性回归这里需要改
+  # out$term[2] <- 'Lipid'
+  out[, 'Metabolite'] <- x
+  out
+}) %>% do.call(rbind, .) %>% setDT
+
+## 计算置信区间
+dt.gg <- dt.fit.lm[
+  , c('CI.low', 'CI.high') := list(
+    estimate - 1.96 * std.error,
+    estimate + 1.96 * std.error
+  )
+][
+  , p.value := as.numeric(p.value)
+][
+  , FDR := as.numeric(NA)
+]
+
+## FDR对每一个变量来计算而不是对所有的变量一起计算
+## 比如所有的脂质100个，把100个脂质的p值一起计算FDR
+## age的100个P值一起计算FDR
+for (term.i in unique(dt.gg[, term])) {
+  set(dt.gg, 
+      i = dt.gg[, which(term == term.i)], 'FDR', 
+      dt.gg[term == term.i, p.adjust(p.value, method = 'fdr')])
+}
+
+
+file.excel <- file.path(
+  output.dir,
+  'Linear-regression-N11V461-umolperg.xlsx'
+)
+
+if(!file.exists(file.excel)) {
+  XLConnect::writeWorksheetToFile(
+    file.excel,
+    data = dt.gg,
+    sheet = 'Sheet1'
+  )
+}
+```
+
+
+## MFP
+
+### glm
+
+```{r}
+## 有多个变量可以作为因变量的时候，为了代码尽可能保持一致
+## 把实际变量名用group_var来替换
+# group_var <- expr(Fibrosis_c_0_12_34)
+
+## 把脂质数据scale以后变成标准差，均值为0，方差为1
+d0 <- d20 %>% scale
+
+## 检查组学数据和临床数据的样本名字一致
+testthat::expect_equal(
+  rownames(d0), rownames(s10)
+)
+
+## 如果有些样本有确实数据，去掉有确实的样本
+# remove NA
+s0 <- s10[, c('Group', 'Age')] %>% 
+  dplyr::mutate(
+    Group = factor(Group, levels = c('NO MAE', 'MAE'))
+  )
+
+
+
+## 合并组学数据和临床数据
+## group 替换成我们要的变量
+df0 <- cbind(s0, d0) %>% dplyr::filter(
+  !is.na(Age)
+)
+
+## 合并以后的组学数据的列从 ncol(s0) + 1到ncol(df0) - 1
+start.col <- ncol(s0) + 1
+end.col <- ncol(df0)
+
+## 每一列做回归
+dt.fit.lm <- lapply(colnames(df0)[start.col:end.col], function(x) {
+  ## 逻辑回归
+  ## 线性回归的话 
+  # fit.lm <- lm(
+  #   as.formula(sprintf('`%s` ~ group + Age + Gender + BMI ', x)),
+  #   data = df0
+  # )
+  fit.lm <- glm(
+    as.formula(sprintf('Group ~ `%s` + Age', x)),
+    family = binomial(link = 'logit'),
+    data = df0
+  )
+  ## 回归的结果整理成数据框
+  out <- broom::tidy(fit.lm)
+  
+  ## 如果是线性回归这里需要改
+  out$term[2] <- 'Lipid'
+  out[, 'Metabolite'] <- x
+  out
+}) %>% do.call(rbind, .) %>% setDT
+
+## 计算置信区间
+dt.gg <- dt.fit.lm[
+  , c('CI.low', 'CI.high') := list(
+    estimate - 1.96 * std.error,
+    estimate + 1.96 * std.error
+  )
+][
+  , p.value := as.numeric(p.value)
+][
+  , FDR := as.numeric(NA)
+]
+
+## FDR对每一个变量来计算而不是对所有的变量一起计算
+## 比如所有的脂质100个，把100个脂质的p值一起计算FDR
+## age的100个P值一起计算FDR
+for (term.i in unique(dt.gg[, term])) {
+  set(dt.gg, 
+      i = dt.gg[, which(term == term.i)], 'FDR', 
+      dt.gg[term == term.i, p.adjust(p.value, method = 'fdr')])
+}
+
+
+file.excel <- file.path(
+  output.dir,
+  'Logistic-regression-N11V461-MFP.xlsx'
+)
+
+if(!file.exists(file.excel)) {
+  XLConnect::writeWorksheetToFile(
+    file.excel,
+    data = dt.gg,
+    sheet = 'Sheet1'
+  )
+}
+```
+
+### lm
+
+```{r}
+## 有多个变量可以作为因变量的时候，为了代码尽可能保持一致
+## 把实际变量名用group_var来替换
+# group_var <- expr(Fibrosis_c_0_12_34)
+
+## 把脂质数据scale以后变成标准差，均值为0，方差为1
+d0 <- d20 %>% scale
+
+## 检查组学数据和临床数据的样本名字一致
+testthat::expect_equal(
+  rownames(d0), rownames(s10)
+)
+
+## 如果有些样本有确实数据，去掉有确实的样本
+# remove NA
+s0 <- s10[, c('Group', 'Age')] %>% 
+  dplyr::mutate(
+    Group = factor(Group, levels = c('NO MAE', 'MAE'))
+  )
+
+
+
+## 合并组学数据和临床数据
+## group 替换成我们要的变量
+df0 <- cbind(s0, d0) %>% dplyr::filter(
+  !is.na(Age)
+)
+
+## 合并以后的组学数据的列从 ncol(s0) + 1到ncol(df0) - 1
+start.col <- ncol(s0) + 1
+end.col <- ncol(df0)
+
+## 每一列做回归
+dt.fit.lm <- lapply(colnames(df0)[start.col:end.col], function(x) {
+  ## 逻辑回归
+  ## 线性回归的话 
+  # fit.lm <- lm(
+  #   as.formula(sprintf('`%s` ~ group + Age + Gender + BMI ', x)),
+  #   data = df0
+  # )
+  fit.lm <- lm(
+    as.formula(sprintf('`%s` ~ Group + Age', x)),
+    data = df0
+  )
+  ## 回归的结果整理成数据框
+  out <- broom::tidy(fit.lm)
+  
+  ## 如果是线性回归这里需要改
+  # out$term[2] <- 'Lipid'
+  out[, 'Metabolite'] <- x
+  out
+}) %>% do.call(rbind, .) %>% setDT
+
+## 计算置信区间
+dt.gg <- dt.fit.lm[
+  , c('CI.low', 'CI.high') := list(
+    estimate - 1.96 * std.error,
+    estimate + 1.96 * std.error
+  )
+][
+  , p.value := as.numeric(p.value)
+][
+  , FDR := as.numeric(NA)
+]
+
+## FDR对每一个变量来计算而不是对所有的变量一起计算
+## 比如所有的脂质100个，把100个脂质的p值一起计算FDR
+## age的100个P值一起计算FDR
+for (term.i in unique(dt.gg[, term])) {
+  set(dt.gg, 
+      i = dt.gg[, which(term == term.i)], 'FDR', 
+      dt.gg[term == term.i, p.adjust(p.value, method = 'fdr')])
+}
+
+
+file.excel <- file.path(
+  output.dir,
+  'Linear-regression-N11V461-MFP.xlsx'
+)
+
+if(!file.exists(file.excel)) {
+  XLConnect::writeWorksheetToFile(
+    file.excel,
+    data = dt.gg,
+    sheet = 'Sheet1'
+  )
+}
+```

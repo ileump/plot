@@ -1,0 +1,94 @@
+---
+title: "complex_heatmap"
+author: "leump"
+date: "11/14/2020"
+output: html_document
+---
+
+
+```{r warning=FALSE}
+library(ComplexHeatmap)
+
+setwd('/Users/leump/Desktop/Plot/output/complexheatmap')
+
+d0 <- read.csv('/Users/leump/Desktop/Plot/data/heatmap_data/data_complexheatmap.csv', row.names = 1, header = T, check.names = F)
+v <- read.csv('/Users/leump/Desktop/Plot/data/heatmap_data/var_complexheatmap.csv', header = T, row.names = 1)
+s <- read.csv('/Users/leump/Desktop/Plot/data/heatmap_data/sample_complexheatmap.csv', header = T, row.names = 1)
+
+# d <- d0[, stringr::str_detect(colnames(d0), 'Cho')]
+# d <- as.data.frame(d)
+# colnames(d) <- 'Cho'
+# rownames(d) <- rownames(d0)
+
+d <- d0[, stringr::str_detect(colnames(d0), 'PE')]
+v <- v[stringr::str_detect(rownames(v), 'PE'), ]
+
+font_family <- 'Liberation sans'
+
+ht_opt(
+    heatmap_row_names_gp = gpar(fontfamily = font_family),
+    heatmap_column_names_gp = gpar(fontfamily = font_family),
+    heatmap_row_title_gp = gpar(fontfamily = font_family, fontface = 'bold'),
+    heatmap_column_title_gp = gpar(fontfamily = font_family, fontface = 'bold'),
+    legend_title_gp = gpar(fontfamily = font_family),
+    legend_labels_gp = gpar(fontfamily = font_family)
+)
+
+gg_color_hue <- function(n) {
+    hues = seq(15, 375, length = n + 1)
+    hcl(h = hues, l = 65, c = 100)[1:n]
+}
+
+col_cols <- gg_color_hue(nlevels(factor(s$Group)))
+row_cols <- gg_color_hue(nlevels(factor(v$Class)))
+
+ha.col <- HeatmapAnnotation(Group = s$Group,
+                            col = list(Group = structure(col_cols, names = levels(factor(s$Group)))),
+                            annotation_name_gp = gpar(fontface = 'bold')
+                            )
+
+ha.row <- rowAnnotation(
+                        Class = stringr::str_extract(colnames(d), '[A-Z]+'),
+                        # Class = stringr::str_extract(rownames(v), '[A-Z]+'),
+                        # Class = v$Class,
+                        # heatmap_colors = c(Group = structure(row_cols, 
+                        #                                      names = levels(factor(v$Class)))),
+                        col = list(Class = structure(row_cols, names = levels(factor(v$Class)))),
+                        annotation_name_gp = gpar(fontface = 'bold')
+                        )
+cairo_pdf('PE.pdf', w = 12, h = 6, family = font_family)
+
+Heatmap(
+    t(scale(d)),
+    column_title = 'PE',
+    name = 'SD',
+    col = circlize::colorRamp2(c(-3, 0, 3), c("navyblue", "white", "firebrick")),
+    # left_annotation = ha.row,
+    top_annotation = ha.col,
+    cluster_rows = F,
+    cluster_columns = F,
+    ## cannot set hjust for column names
+    heatmap_legend_param = list(legend_height = unit(2, 'in')),
+    show_column_names = FALSE,
+    bottom_annotation = HeatmapAnnotation(
+        text = anno_text(rownames(d), rot = 270, offset = unit(1, "npc"), just = "left"),
+        annotation_height = max_text_width(rownames(d))
+    )
+)
+
+dev.off()
+# 
+# 
+# if (input$heatmap_rotate) {
+#     width_val <- 180 + max_colname_nchar * 6 + ncols * 12
+#     height_val <- 150 + max_rowname_nchar * 6 +  nrows * 12
+# } else {
+#     width_val <- 180 + max_rowname_nchar * 6 + ncols * 12
+#     height_val <- 150 + max_colname_nchar * 6 +  nrows * 12
+# }
+# 
+# min.val <- 300 * mult
+# max.val <- 4800 * mult
+# val <- min(height_val, 4800) * mult
+```
+

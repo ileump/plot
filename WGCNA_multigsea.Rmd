@@ -1,0 +1,837 @@
+---
+title: "WGCNA_multigsea"
+author: "leump"
+date: "6/20/2021"
+output: html_document
+---
+
+```{r, include = F, echo = F, message = F, warnings = F}
+options(java.parameters = '-Xmx8000m')
+source('Rscript/setup.R')
+source('Rscript/functions.R')
+source('Rscript/app_functions.R')
+source('rscript/pathway_funs.R', encoding = 'UTF-8')
+
+options(useFancyQuotes = FALSE)
+
+
+knitr::opts_chunk$set(
+  cache = T,
+  message = F,
+  dpi = 300
+)
+
+library(plyr)
+library(ggplot2)
+library(magrittr)
+library(kableExtra)
+library(limma)
+library(WGCNA)
+library(multiGSEA)
+library(metaboliteIDmapping)
+library(reactome.db)
+
+library(extrafont)
+loadfonts(device = 'win', quiet = T)
+par(family = 'Liberation')
+windowsFonts(
+  serif = 'Liberation Serif',
+  sans = 'Liberation Sans',
+  mono = 'Liberation Mono'
+)
+
+par(family = 'sans')
+
+set.seed(1)
+
+prefix <- '120'
+output.dir <- file.path('output', prefix)
+Sys.setlocale("LC_ALL","Chinese")
+
+if (!dir.exists(output.dir)) {
+    dir.create(output.dir, recursive = T)
+}
+```
+
+```{r, read data}
+## databases <- c('kegg', 'panther', 'pathbank', 'pharmgkb', 'reactome', 'smpdb', 'wikipathways') 
+## organism <- c('hsapiens', 'mmusculus')
+## layers <- c('transcriptome', 'metabolome', 'proteome')
+layers <- c('transcriptome', 'metabolome', 'proteome')[3]
+if (layers == 'transcriptome') {
+  ## gene data
+  d.data <- read.csv('data/multigsea_WGCNA/gene_data/gene data.csv',
+                     row.names = 1, check.names = F)
+  
+  d.data_tpm <- d.data[,stringr::str_detect(colnames(d.data), 'tpm')]
+  d.data_tpm <- data.frame(d.data_tpm, d.data$gene_symbol)
+  d.data_tpm <- d.data_tpm[, c(1:12, 15)]
+  # data processing
+  d.data_tpm[d.data_tpm < 1] <- NA
+  d.data_tpm <- na.omit(d.data_tpm)
+  # sym = gene symbol
+  sym <- d.data_tpm$d.data.gene_symbol
+  d.data_tpm <- d.data_tpm[, c(1:12)]
+  d.data_tpm <- log2(d.data_tpm)
+  d.data_gene <- t(d.data_tpm)
+  # d.data_tpm <- d.data_tpm[-9, ]
+  datExpr <- d.data_gene  
+} else if (layers == 'proteome') {
+  
+  file.xlsx <- '/Users/leump/Desktop/2021-053-A-02/Annotation_combine.xlsx'
+  d.data <- XLConnect::readWorksheetFromFile(
+    file.xlsx,
+    sheet = 'Annotation_Combine',
+    check.names = F,
+    rownames = 1
+  )
+
+  d.sample <- read.csv('/Users/leump/Desktop/2021-053-A-02/sample.csv',
+                     row.names = 1, check.names = F)
+  g <- factor(d.sample$Group, levels = c('LBW', 'NBW', 'HBW'))
+  combs <- as.data.frame(combn(levels(g), 2))
+  d.data_prote <- d.data[, 8: 22]
+  d.data_prote <- na.omit(d.data_prote) %>% t
+
+  i <- 3
+  d2 <- d.data_prote[stringr::str_detect(rownames(d.data_prote), combs[2, i]), ]
+  d1 <- d.data_prote[stringr::str_detect(rownames(d.data_prote), combs[1, i]), ]
+  dd <- rbind(d1, d2)
+  
+  datExpr <- log2(dd)
+  
+} else {
+  ## metabo data
+  d.data <- read.csv('data/multigsea_WGCNA/metbo_data/data1.csv',
+                     row.names = 1, check.names = F)
+  d.data_metabo <- scale(d.data)
+  datExpr <- d.data_metabo  
+}
+
+output.dir.1 <- file.path(output.dir, paste0(combs[2, i], '-', combs[1, i]))
+if (!dir.exists(output.dir.1)) {
+    dir.create(output.dir, recursive = T)
+}
+
+# ## sample var
+# d.sample <- read.csv('data/multigsea_WGCNA/metbo_data/sample.csv',
+#                    row.names = 1, check.names = F)
+# d.var <- read.csv('data/multigsea_WGCNA/metbo_data/var1.csv',
+#                    row.names = 1, check.names = F)
+```
+
+```{r, SoftThreshold}
+powers = c(1:20)
+sft = pickSoftThreshold(datExpr, powerVector = powers, verbose = 5)
+sizeGrWindow(12, 5)
+cex1 = 0.8
+## plot
+par(mfrow = c(1,2))
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+     main = paste("Scale independence")) +
+     text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+          labels=powers,cex=cex1,col="red") +
+     abline(h=0.80,col="red")
+plot(sft$fitIndices[,1], sft$fitIndices[,5],
+     xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+     main = paste("Mean connectivity")) +
+     text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red") +
+     abline(h=0,col="red")
+## 经验power http://blog.genesino.com/2018/04/wgcna/
+## power
+# if (is.na(power)){
+#   power = ifelse(nSamples<20, ifelse(type == "unsigned", 9, 18),
+#           ifelse(nSamples<30, ifelse(type == "unsigned", 8, 16),
+#           ifelse(nSamples<40, ifelse(type == "unsigned", 7, 14),
+#           ifelse(type == "unsigned", 6, 12))       
+#           )
+#           )
+# }
+
+filename_pdf <- file.path(output.dir.1,
+                          paste0('WGCNA_SoftThreshold.pdf')
+                          )
+filename_tiff <- file.path(output.dir.1,
+                          paste0('WGCNA_SoftThreshold.tiff')
+                          )
+
+cairo_pdf(file = filename_pdf, width = 7, height = 4, onefile = T)
+par(mfrow = c(1,2))
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+     main = paste("Scale independence")) +
+     text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+          labels=powers,cex=cex1,col="red") +
+     abline(h=0.80,col="red")
+plot(sft$fitIndices[,1], sft$fitIndices[,5],
+     xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+     main = paste("Mean connectivity")) +
+     text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red") +
+     abline(h=0,col="red")
+dev.off()
+
+
+tiff(file = filename_tiff, width = 7, height = 4,
+     units = 'in', res = 300, compression = 'lzw+p')
+par(mfrow = c(1,2))
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+     main = paste("Scale independence")) +
+     text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+          labels=powers,cex=cex1,col="red") +
+     abline(h=0.80,col="red")
+plot(sft$fitIndices[,1], sft$fitIndices[,5],
+     xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+     main = paste("Mean connectivity")) +
+     text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red") +
+     abline(h=0,col="red")
+dev.off()
+```
+
+```{r, net}
+cor <- WGCNA::cor
+power = 10
+net = blockwiseModules(
+				 datExpr,
+				 power = power,
+				 maxBlockSize = 16000,
+				 TOMType = "unsigned", minModuleSize = 30,
+				 reassignThreshold = 0, mergeCutHeight = 0.25,
+				 numericLabels = TRUE, pamRespectsDendro = FALSE,
+				 saveTOMs = F, 
+				 verbose = 3
+ )
+cor <- stats::cor
+table(net$colors)
+```
+
+```{r, module}
+# Convert labels to colors for plotting
+mergedColors = labels2colors(net$colors)
+moduleColors <- labels2colors(net$colors)
+table(mergedColors)
+
+plotDendroAndColors(net$dendrograms[[1]], mergedColors[net$blockGenes[[1]]],
+                    "Module colors",
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05)
+
+# modulemembership.csv
+MEs = net$MEs
+MEs0 = moduleEigengenes(datExpr, moduleColors)$eigengenes
+MEs = orderMEs(MEs0)
+modulemembership <- as.data.frame(cor(datExpr, MEs, use = "p"))
+module_name = apply(modulemembership, 1, function(x) colnames(modulemembership)[which.max(x)])
+if (layers == 'transcriptome') {
+  # gene data add gene symbol name
+  modulemembership <- cbind(Symbol = sym, modulemembership)
+  modulemembership 
+} else {
+  # metabo & prote
+  modulemembership <- cbind(modulemembership, Module = module_name)
+  modulemembership 
+}
+
+
+filename_pdf <- file.path(output.dir.1,
+                          paste0('WGCNA_color.pdf')
+                          )
+filename_tiff <- file.path(output.dir.1,
+                           paste0('WGCNA_color.tiff')
+                           )  
+filename_csv <- file.path(output.dir.1,
+                          paste0('WGCNA_module.csv')
+                          )
+
+## pdf
+cairo_pdf(file = filename_pdf, width = 8, height = 8, onefile = T)
+plotDendroAndColors(net$dendrograms[[1]], mergedColors[net$blockGenes[[1]]],
+                    "Module colors",
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05)
+dev.off()
+## tiff
+tiff(file = filename_tiff, width = 8, height = 8,
+     units = 'in', res = 300, compression = 'lzw+p')
+plotDendroAndColors(net$dendrograms[[1]], mergedColors[net$blockGenes[[1]]],
+                    "Module colors",
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05)
+dev.off()
+## csv
+write.csv(modulemembership,
+          file = filename_csv,
+          row.names = T,
+          fileEncoding = 'UTF-8')
+
+```
+
+```{r, TOM heatmap}
+# 主要是可视化 TOM矩阵，WGCNA的标准配图
+# 然后可视化不同 模块 的相关性 热图
+# 不同模块的层次聚类图
+# 还有模块诊断，主要是 intramodular connectivity
+nGenes = ncol(datExpr)
+nSamples = nrow(datExpr)
+geneTree = net$dendrograms[[1]]
+dissTOM = 1-TOMsimilarityFromExpr(datExpr, power = power)
+plotTOM = dissTOM^7
+diag(plotTOM) = NA
+#TOMplot(plotTOM, geneTree, moduleColors, main = "Network heatmap plot, all genes")
+nSelect = 100
+# For reproducibility, we set the random seed
+set.seed(10)
+select = sample(nGenes, size = nSelect)
+selectTOM = dissTOM[select, select]
+# There’s no simple way of restricting a clustering tree to a subset of genes, so we must re-cluster.
+selectTree = hclust(as.dist(selectTOM), method = "average")
+selectColors = moduleColors[select]
+# Open a graphical window
+sizeGrWindow(9,9)
+# Taking the dissimilarity to a power, say 10, makes the plot more informative by effectively changing
+# the color palette; setting the diagonal to NA also improves the clarity of the plot
+plotDiss = selectTOM^7
+diag(plotDiss) = NA
+# plot
+TOMplot(plotDiss, selectTree, selectColors, 
+        main = "Network heatmap plot, selected genes")
+
+
+
+
+filename_pdf <- file.path(output.dir.1,
+                          paste0('WGCNA_TOM.pdf')
+                          )
+filename_tiff <- file.path(output.dir.1,
+                           paste0('WGCNA_TOM.tiff')
+                           )  
+filename_csv <- file.path(output.dir.1,
+                          paste0('WGCNA_TOM.csv')
+                          )
+## pdf
+cairo_pdf(file = filename_pdf, width = 8, height = 8, onefile = T)
+TOMplot(plotDiss, selectTree, selectColors, 
+        main = "Network heatmap plot, selected genes")
+dev.off()
+## tiff
+tiff(file = filename_tiff, width = 8, height = 8,
+     units = 'in', res = 300, compression = 'lzw+p')
+TOMplot(plotDiss, selectTree, selectColors, 
+        main = "Network heatmap plot, selected genes")
+dev.off()  
+
+as.data.frame(plotDiss)
+select <- datExpr[, select] %>% colnames
+rownames(plotDiss) <- select
+colnames(plotDiss) <- select
+
+write.csv(plotDiss,
+        file = filename_csv,
+        row.names = T,
+        fileEncoding = 'UTF-8')
+```
+
+```{r, module correlation}
+# module > 3 
+# module eigengene, 可以绘制线图，作为每个模块的基因表达趋势的展示
+MEs = net$MEs
+### 不需要重新计算，改下列名字就好
+### 官方教程是重新计算的，起始可以不用这么麻烦
+MEs_col = MEs
+colnames(MEs_col) = paste0("ME", labels2colors(as.numeric(stringr::str_replace_all(colnames(MEs), "ME", ""))))
+MEs_col = orderMEs(MEs_col)
+# single omic data
+plotEigengeneNetworks(MEs_col, "Eigengene adjacency heatmap",
+                      marDendro = c(3,3,2,4),
+                      marHeatmap = c(3,4,2,2), plotDendrograms = T,
+                      xLabelsAngle = 90)
+
+# 根据基因间表达量进行聚类所得到的各模块间的相关性图
+# marDendro/marHeatmap 设置下、左、上、右的边距
+
+filename_pdf <- file.path(output.dir.1,
+                          paste0('WGCNA_Eigengene_adjacency_heatmap.pdf')
+                          )
+filename_tiff <- file.path(output.dir.1,
+                           paste0('WGCNA_Eigengene_adjacency_heatmap.tiff')
+                           )  
+
+## pdf
+cairo_pdf(file = filename_pdf, width = 8, height = 12, onefile = T)
+plotEigengeneNetworks(MEs_col, "Eigengene adjacency heatmap",
+                      marDendro = c(3,3,2,4),
+                      marHeatmap = c(3,4,2,2), plotDendrograms = T,
+                      xLabelsAngle = 90)
+
+dev.off()
+## tiff
+tiff(file = filename_tiff, width = 8, height = 12,
+     units = 'in', res = 300, compression = 'lzw+p')
+plotEigengeneNetworks(MEs_col, "Eigengene adjacency heatmap",
+                      marDendro = c(3,3,2,4),
+                      marHeatmap = c(3,4,2,2), plotDendrograms = T,
+                      xLabelsAngle = 90)
+dev.off()
+
+# # joint omics data
+# module_gene <- MEs_col
+# colnames(module_gene) <- paste("gene", colnames(module_gene), sep = "_")
+# module_metabo <- MEs_col
+# colnames(module_metabo) <- paste("metabo", colnames(module_metabo), sep = "_")
+# module_joint <- cbind(module_rna, module_metabo)
+# rownames(module_joint) <- rownames(d.data)
+# # plot
+# cor1 <- cor(module_joint, method = 'pearson') %>% as.data.frame
+# correlation_heatmap <- ggcorrplot(cor1, method = 'circle',
+#                                   outline.col = 'white', ggtheme = theme_bw(),
+#                                   type = 'upper',
+#                                   colors = c("#609EC1", "white", "#E46726"),
+#                                   lab = T, lab_size = 2, tl.cex = 8
+#                                   )
+```
+
+```{r, module select & gsea}
+table(mergedColors)
+databases <- c('kegg', 'panther', 'pathbank', 'pharmgkb', 'reactome', 'smpdb', 'wikipathways')[1]
+organism <- c('hsapiens', 'mmusculus')[1]
+pathways <- getMultiOmicsFeatures(
+  dbs = databases, layer = layers, 
+  # returnTranscriptome = 'SYMBOL', 
+  returnProteome = 'UNIPROT',
+  # returnMetabolome = 'HMDB',
+  organism = organism
+)
+for (j in 1: nlevels(factor(mergedColors))) {
+  module_name = levels(factor(mergedColors))[j]
+  which.module = module_name
+  dat <- datExpr[, moduleColors == which.module] 
+  selected <- colnames(dat)
+  selected
+  contrast <- paste0(combs[2, i], '-', combs[1, i])
+  contrast
+  if (layers == 'transcriptome') {
+    ## gene original data
+    gene <- d.data[selected, ]
+    gene <- data.frame(row.names = gene$gene_id, 
+                       'KO-WT' = gene$`diffexp_log2fc_WT-vs-MUT`
+                       )
+    gene  
+  } else if (layers == 'proteome') {
+    prote <- d.data[selected, ]
+    prote <- data.frame(row.names = rownames(prote), 
+                        contrast = log2(prote$`HBW/NBW Ratio`)
+                        )
+    
+  } else {
+    ## metabo original data
+    g <- factor(d.sample$Group[1:12], levels = c('WT', 'KO'))
+    ht <- hypothesisTest(d.data, g)
+    fold <- ht[selected, 3]
+    hmdb <- d.var[selected, 'HMDB ID']
+    metabo <- data.frame(row.names = hmdb, 
+                         'KO-WT' = fold
+                         )
+    metabo  
+  }
+
+  # fgsea gene metabo
+  if (layers == 'transcriptome') {
+    data <- gene
+  } else if (layers == 'proteome') {
+    data <- prote
+  } else {
+    data <- metabo
+  }
+  colnames(data) <- contrast
+  res.fgsea <- purrr::map(
+    colnames(data) %>% purrr::set_names(),
+    ~ data
+  ) %>%
+    purrr::imap(function(d.ht, contrast.name) {
+      if (layers == 'transcriptome') {
+        # gene
+        t.stat <- d.ht %>%
+          dplyr::mutate(
+            ENTREZID = rownames(data)
+          ) %>%
+          tidyr::drop_na(ENTREZID) %>%
+          dplyr::pull('KO-WT', name = ENTREZID)    
+        
+        set.seed(1)
+        fgsea::fgseaMultilevel(pathways$transcriptome, t.stat, eps = 0) %>%
+          dplyr::mutate(
+            ## leadingEdge is a list
+            leadingEdge = purrr::map_chr(leadingEdge, ~ paste0(., collapse = ','))
+          )
+      } else if (layers == 'proteome') {
+        # prote
+        t.stat <- d.ht %>%
+          dplyr::mutate(
+            UNIPROT = rownames(data)
+          ) %>%
+          tidyr::drop_na(UNIPROT) %>%
+          dplyr::pull(contrast, name = UNIPROT)     
+        
+        set.seed(1)
+        fgsea::fgseaMultilevel(pathways$proteome, t.stat, eps = 0) %>%
+          dplyr::mutate(
+            ## leadingEdge is a list
+            leadingEdge = purrr::map_chr(leadingEdge, ~ paste0(., collapse = ','))
+          )
+      } else {
+        # metabo
+        t.stat <- d.ht %>%
+          dplyr::mutate(
+            HMDB = rownames(data)
+          ) %>%
+          tidyr::drop_na(HMDB) %>%
+          dplyr::pull('KO-WT', name = HMDB)     
+        
+        set.seed(1)
+        fgsea::fgseaMultilevel(pathways$metabolome, t.stat, eps = 0) %>%
+          dplyr::mutate(
+            ## leadingEdge is a list
+            leadingEdge = purrr::map_chr(leadingEdge, ~ paste0(., collapse = ','))
+          )
+      }
+   })
+  
+  output.dir.gsea <- file.path(output.dir.1, 'GSEA', module_name)
+  
+  # summary csv
+  dir.name <- file.path(output.dir.gsea, paste0('fgsea_', databases))
+  if (!dir.exists(dir.name)) {
+    dir.create(dir.name, recursive = T)
+  }
+  
+  purrr::iwalk(res.fgsea, function(x, contrast.name) {
+    file.csv <- file.path(dir.name, paste0('fgsea_', contrast.name, '_', layers, '.csv'))
+    
+    if (!file.exists(file.csv)) {
+      write.csv(x, file.csv)
+    }
+  })
+  # summary dotplot
+  file.pdf <- file.path(dir.name, paste0('fgsea_', databases, '_summary', '_', layers, '.pdf'))
+  if (!file.exists(file.pdf)) {
+    if (databases == 'kegg') {
+      cairo_pdf(file.pdf, onefile = T, width = 16, height = 28)
+    } else {
+      cairo_pdf(file.pdf, onefile = T, width = 20, height = 50)
+    }   
+    
+    purrr::walk(c('pval', 'padj'), function(p) {
+      p_exp <- rlang::parse_expr(p)
+      
+      d1 <- purrr::imap_dfr(res.fgsea, function(x, y) {
+        x %>% 
+          dplyr::select(pathway, !!p_exp, size) %>%
+          dplyr::mutate(
+            contrast = y, 
+            pathway = forcats::fct_reorder2(pathway, !!p_exp, -size)
+          )
+      })
+      
+      p1 <- ggplot(d1, aes(x = pathway, y = -log10(!!p_exp))) +
+        geom_point(aes(size = size, color = !!p_exp < 0.05)) + 
+        scale_color_manual(values = c('gray', 'red')) +
+        geom_hline(yintercept = -log10(0.05)) +
+        labs(x = '') +
+        coord_flip() + 
+        facet_wrap(~ contrast, nrow = 1) +
+        theme_bw()
+      
+      print(p1)
+    })
+    dev.off()
+  }
+}
+```
+
+```{r, pathway}
+## pathway
+pathways.graphite <- lapply(databases, function(x) {
+  graphite::pathways(organism, x)
+})
+names(pathways.graphite) <- databases
+
+d.pathway <- lapply(pathways.graphite, function(pathway.db) {
+  lapply(pathway.db, function(pathway) {
+    c(pathway@id, pathway@title, pathway@database)
+  }) %>% 
+  do.call(what = rbind) %>%
+    as.data.frame %>% 
+    magrittr::set_colnames(c('pathway_id', 'pathway_title', 'database')) %>%
+    dplyr::mutate(
+      name = sprintf('(%s) %s', database, pathway_title)
+    )
+  }) %>%
+  do.call(what = rbind) %>%
+  magrittr::set_rownames(NULL)
+
+d.metabolites <- purrr::map_dfr(pathways.graphite, function(pathway.db) {
+  lapply(pathway.db, function(pathway) {
+    native_id <- graphite::nodes(pathway, which = 'metabolites')
+    
+    if (length(native_id) > 0) {
+      data.frame(
+        database = pathway@database,
+        pathway_id = pathway@id,
+        pathway_title = pathway@title, 
+        native_id = native_id
+      )
+    } else {
+      NULL
+    }
+  }) %>% 
+    do.call(what = rbind)
+}) %>% 
+  magrittr::set_rownames(NULL) %>% 
+  dplyr::mutate(
+    KEGG = stringi::stri_extract_first_regex(native_id, '(?<=KEGGCOMP:)C[0-9]{5}$')
+  ) %>%
+  dplyr::left_join(
+    tidyr::drop_na(metabolitesMapping, KEGG), by = 'KEGG'
+  )
+
+```
+
+```{r, multigsea}
+res <- list(
+  'transcriptome' = res.fgsea$`KO - WT`,
+  'metabolome' = res.fgsea$`KO - WT`
+)
+df <- extractPvalues(enrichmentScores = res,
+                     pathwayNames = names(pathways$transcriptome))
+## pathway column is not in df
+df$combined_pval <- combinePvalues(df)
+df$combined_padj <- p.adjust(df$combined_pval, method = 'BH')
+df$pathway <- names(pathways$transcriptome)
+df
+# summary dotplot
+file.pdf <- file.path(dir.name, 'fgsea_KEGG_multi_summary.pdf')
+if (!file.exists(file.pdf)) {
+  cairo_pdf(file.pdf, onefile = T, width = 16, height = 32)
+  
+  purrr::walk(c('combined_pval', 'combined_padj'), function(p) {
+    p_exp <- rlang::parse_expr(p)
+    
+    p1 <- ggplot(df, aes(x = pathway, y = -log10(!!p_exp))) +
+      geom_point(aes(color = !!p_exp < 0.05)) + 
+      scale_color_manual(values = c('gray', 'red')) +
+      geom_hline(yintercept = -log10(0.05)) +
+      labs(x = '') +
+      coord_flip() + 
+      # facet_wrap(~ contrast, nrow = 1) +
+      theme_bw()
+  
+    print(p1)
+  })
+  dev.off()
+}
+```
+
+```{r, limma gsea}
+## databases <- c('kegg', 'panther', 'pathbank', 'pharmgkb', 'reactome', 'smpdb', 'wikipathways') 
+## organism <- c('hsapiens', 'mmusculus')
+## layers <- c('transcriptome', 'metabolome', 'proteome')
+layers <- c('transcriptome', 'metabolome')[2]
+databases <- 'kegg'
+organism <- 'mmusculus'
+
+pathways <- getMultiOmicsFeatures(
+  dbs = databases, layer = layers, 
+  # returnTranscriptome = 'ENTREZID', 
+  # returnProteome = 'SYMBOL',
+  returnMetabolome = 'HMDB',
+  organism = organism
+)
+
+# read data
+d10 <- XLConnect::readWorksheetFromFile(
+  'data/20210401/2021-180-C-01 MS data-Statistical format.xlsx',
+  sheet = 'data.csv',
+  check.names = F,
+  rownames = 1
+)[1:80, ]
+
+d.var <- XLConnect::readWorksheetFromFile(
+  'data/20210401/2021-180-C-01 MS data-Statistical format.xlsx',
+  sheet = 'var.csv',
+  check.names = F,
+  rownames = 1
+)
+
+d10[d10 == 0] <- 0.5 * min(d10[d10 > 0])
+
+d10.log2 <- log2(d10)
+
+ds10 <- data.frame(
+  sample = rownames(d10)
+) %>%
+  mutate(
+    subject = stringi::stri_sub(sample, 1, 1) %>% factor,
+    timepoint = stringi::stri_sub(sample, 3, 3) %>% factor,
+    group = stringi::stri_sub(sample, 2, 2) %>% factor(levels = c('N', 'T'))
+  )
+
+# fit2.single
+timepoint <- paste0('T', ds10$timepoint)
+group <- ds10$group
+
+##------------------
+## single factor
+##------------------
+timepoint.group <- paste(timepoint, group, sep = '.') 
+design.single <- model.matrix(~0 + timepoint.group)
+colnames(design.single) %<>% stringi::stri_replace_all_fixed('timepoint.group', '')
+
+## multilevel
+corfit <- duplicateCorrelation(t(d10.log2),design.single, block=ds10$subject)
+
+fit.single <- limma::lmFit(
+  t(d10.log2), 
+  design.single,
+  block = ds10$subject,
+  correlation = corfit$consensus.correlation
+)
+
+# fit2.single <- vapply(1:8, function(i) {
+#   sprintf('T%d.T - T%d.N', i, i)
+# }, character(1)) %>%
+#   as.list %>%
+#   c(list(levels = design.single)) %>%
+#   do.call(makeContrasts, .) %>%
+#   contrasts.fit(fit, .) %>%
+#   eBayes
+
+fit2.single <- makeContrasts(
+  # # 对比组一：肿瘤与正常对比
+  # 'T1.T - T1.N', 'T2.T - T2.N', 'T3.T - T3.N', 'T4.T - T4.N',
+  # 'T5.T - T5.N', 'T6.T - T6.N', 'T7.T - T7.N', 'T8.T - T8.N',
+  # # 第二时间段肿瘤与正常对比（小组2,3,4）
+  # '((T2.T + T3.T + T4.T) - (T2.N + T3.N + T4.N))/3',
+  # # 第三时间段肿瘤与正常对比（小组5,6,7）
+  # '((T5.T + T6.T + T7.T) - (T5.N + T6.N + T7.N))/3',
+  # # 肿瘤组织处理时间梯度对比
+  # 'T2.T - T1.T', 'T3.T - T1.T', 'T4.T - T1.T', 'T5.T - T1.T', 'T6.T - T1.T', 'T7.T - T1.T', 'T8.T - T1.T',
+  # 'T3.T - T2.T', 'T4.T - T2.T', 'T5.T - T2.T', 'T6.T - T2.T', 'T7.T - T2.T', 'T8.T - T2.T',
+  # 'T4.T - T3.T', 'T5.T - T3.T', 'T6.T - T3.T', 'T7.T - T3.T', 'T8.T - T3.T',
+  # 'T5.T - T4.T', 'T6.T - T4.T', 'T7.T - T4.T', 'T8.T - T4.T',
+  # 'T6.T - T5.T', 'T7.T - T5.T', 'T8.T - T5.T',
+  # 'T7.T - T6.T', 'T8.T - T6.T',
+  # 'T8.T - T7.T',
+  # # 正常组织处理时间梯度对比
+  # 'T2.N - T1.N', 'T3.N - T1.N', 'T4.N - T1.N', 'T5.N - T1.N', 'T6.N - T1.N', 'T7.N - T1.N', 'T8.N - T1.N',
+  # 'T3.N - T2.N', 'T4.N - T2.N', 'T5.N - T2.N', 'T6.N - T2.N', 'T7.N - T2.N', 'T8.N - T2.N',
+  # 'T4.N - T3.N', 'T5.N - T3.N', 'T6.N - T3.N', 'T7.N - T3.N', 'T8.N - T3.N',
+  # 'T5.N - T4.N', 'T6.N - T4.N', 'T7.N - T4.N', 'T8.N - T4.N',
+  # 'T6.N - T5.N', 'T7.N - T5.N', 'T8.N - T5.N',
+  # 'T7.N - T6.N', 'T8.N - T6.N',
+  # 'T8.N - T7.N',
+  # 肿瘤组织处理时间梯度对比
+  'T2.T - T1.T',
+  'T3.T - T2.T',
+  'T4.T - T3.T',
+  'T5.T - T4.T',
+  'T6.T - T5.T',
+  'T7.T - T6.T',
+  'T8.T - T7.T',
+  # 正常组织处理时间梯度对比
+  'T2.N - T1.N',
+  'T3.N - T2.N',
+  'T4.N - T3.N',
+  'T5.N - T4.N', 
+  'T6.N - T5.N',
+  'T7.N - T6.N',
+  'T8.N - T7.N',
+  levels = design.single
+) %>%
+  contrasts.fit(fit.single, contrasts = .) %>%
+  eBayes
+
+res.fgsea <- purrr::map(
+  colnames(fit2.single$contrasts) %>% purrr::set_names(), 
+  ~ topTable(fit2.single, coef = ., number = Inf, adjust.method = 'BH')[
+    rownames(d.var), ]
+    # colnames(data.metabolome$log2), ]
+)[
+  c('T2.N - T1.N', 
+    'T3.N - T2.N',
+    'T4.N - T3.N',
+    'T5.N - T4.N',
+    'T6.N - T5.N',
+    'T7.N - T6.N',
+    'T8.N - T7.N')
+] %>%
+  purrr::imap(function(d.limma, contrast.name) {
+    testthat::expect_equal(
+      rownames(d.limma), 
+      rownames(d.var)
+    )
+    
+    t.stat <- d.limma %>% 
+      dplyr::mutate(
+        HMDB = d.var$`Database ID`
+      ) %>%
+      tidyr::drop_na(HMDB) %>% 
+      dplyr::pull(t, name = HMDB)
+    
+    set.seed(1)
+    fgsea::fgseaMultilevel(pathways$metabolome, t.stat, eps = 0) %>%
+      dplyr::mutate(
+        ## leadingEdge is a list
+        leadingEdge = purrr::map_chr(leadingEdge, ~ paste0(., collapse = ','))
+      )
+  })
+# summary csv
+dir.name <- file.path(output.dir, 'fgsea_matabolome')
+if (!dir.exists(dir.name)) {
+  dir.create(dir.name, recursive = T)
+}
+
+purrr::iwalk(res.fgsea, function(x, contrast.name) {
+  file.csv <- file.path(dir.name, paste0('fgsea_', contrast.name, '.csv'))
+  
+  if (!file.exists(file.csv)) {
+    write.csv(x, file.csv)
+  }
+})
+# summary dotplot
+file.pdf <- file.path(dir.name, 'fgsea_KEGG_summary.pdf')
+if (!file.exists(file.pdf)) {
+  # gene
+  cairo_pdf(file.pdf, onefile = T, width = 16, height = 32)
+  # # metabo
+  # cairo_pdf(file.pdf, onefile = T, width = 16, height = 12)
+  purrr::walk(c('pval', 'padj'), function(p) {
+    p_exp <- rlang::parse_expr(p)
+    
+    d1 <- purrr::imap_dfr(res.fgsea, function(x, y) {
+      x %>% 
+        dplyr::select(pathway, !!p_exp, size) %>%
+        dplyr::mutate(
+          contrast = y, 
+          pathway = forcats::fct_reorder2(pathway, !!p_exp, -size)
+        )
+    })
+    
+    p1 <- ggplot(d1, aes(x = pathway, y = -log10(!!p_exp))) +
+      geom_point(aes(size = size, color = !!p_exp < 0.05)) + 
+      scale_color_manual(values = c('gray', 'red')) +
+      geom_hline(yintercept = -log10(0.05)) +
+      labs(x = '') +
+      coord_flip() + 
+      facet_wrap(~ contrast, nrow = 1) +
+      theme_bw()
+    
+    print(p1)
+  })
+  dev.off()
+}
+```
+
+
+
+

@@ -1,0 +1,120 @@
+# 140 lipids QC
+
+用包含QC样本的数据生成PCA图和GGally::ggpairs图，ggpairs包含散点图,分布密度图和Pearson相关系数。
+
+```{r, include=F, echo=F, message=F, warnings=F}
+source('Rscript/setup.R')
+source('Rscript/functions.R')
+source('Rscript/app_functions.R')
+source('Rscript/app_functions_2.R')
+# source('Rscript/pathway_funs.R')
+
+options(useFancyQuotes = FALSE)
+options(java.parameters = '-Xmx8000m')
+
+knitr::opts_chunk$set(
+  cache = T,
+  message = F,
+  dpi = 300
+)
+
+library(plyr)
+library(ggplot2)
+library(magrittr)
+library(kableExtra)
+library(dplyr)
+
+
+# library(extrafont)
+# loadfonts(device = 'win', quiet = T)
+# par(family = 'Liberation')
+# windowsFonts(
+#   serif = 'Liberation Serif',
+#   sans = 'Liberation Sans',
+#   mono = 'Liberation Mono'
+# )
+
+par(family = 'sans')
+
+## use in cairo_pdf
+font_family <- 'sans'
+
+prefix <- 'qc'
+output.dir <- file.path('output', prefix)
+# Sys.setlocale("LC_ALL","Chinese")
+
+if (!dir.exists(output.dir)) {
+    dir.create(output.dir, recursive = T)
+}
+```
+
+```{r}
+f10 <- '/users/leump/Desktop/2020-104-B-02/QC.xlsx'
+
+d10 <- read.data(f10, type = 'data', sheet = 'data.csv')
+
+s10 <- read.data(f10, type = 'sample', sheet = 'sample.csv')
+
+v10 <- read.data(f10, type = 'var', sheet = 'var.csv')
+
+
+
+
+
+
+
+
+
+testthat::expect_equal(
+  rownames(d10), rownames(s10)
+)
+
+testthat::expect_equal(
+  colnames(d10), rownames(v10)
+)
+```
+
+
+## Sample QC
+
+```{r}
+g <- s10$Group
+
+res.pca <- FactoMineR::PCA(d10)
+# factoextra::fviz_eig(res.pca, addlabels = TRUE, ylim = c(0, 25), )
+
+# ggsave(file = file.path(output.dir, 'Lipid_QC_PCA_screeplot.pdf'), w = 7, h = 7)
+ 
+# pdf(file = file.path(output.dir, 'Lipid_QC_PCA_individual.pdf'), w = 7, h = 7)
+
+p <- factoextra::fviz_pca_ind(res.pca, habillage = g, axes = c(1,2),
+             label = F, # Avoid text overlapping (slow if many points)
+             pointsize = 4, mean.point = F
+) %>% print
+
+ggsave(file.path(output.dir, 'PCA_QC_individual.pdf'), w = 7, h = 7)
+ggsave(file.path(output.dir, 'PCA_QC_individual.tiff'), 
+       w = 7, h = 7, units = 'in', compression = 'lzw+p', dpi = 300)
+
+```
+
+## matrix
+
+
+```{r}
+library(GGally)
+library(rlang)
+
+d <- log10(t(d10[g == 'QC', ])) 
+
+d[!is.finite(d)] <- NA
+
+d <- as.data.frame(d)
+
+p <- GGally::ggpairs(d) +
+  theme_bw()
+
+ggsave(plot = p, file.path(output.dir, 'Pairs_QC.pdf'), w = 7, h = 7)
+ggsave(plot = p, file.path(output.dir, 'Pairs_QC.tiff'), 
+       w = 7, h = 7, units = 'in', compression = 'lzw+p', dpi = 300)
+```

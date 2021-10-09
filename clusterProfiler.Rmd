@@ -1,0 +1,175 @@
+# 110 RNASeq 
+
+使用clusterProfiler进行富集分析
+https://www.jianshu.com/p/d484003dced5?utm_campaign=hugo
+
+```{r, include=F, echo=F, message=F, warnings=F}
+options(java.parameters = '-Xmx8000m')
+source('Rscript/setup.R')
+source('Rscript/functions.R')
+source('Rscript/app_functions.R')
+source('rscript/pathway_funs.R', encoding = 'UTF-8')
+
+
+options(useFancyQuotes = FALSE)
+
+
+knitr::opts_chunk$set(
+  cache = T,
+  message = F,
+  dpi = 300
+)
+
+library(plyr)
+library(dplyr)
+library(ggplot2)
+library(magrittr)
+# library(MetaboAnalystR)
+library(kableExtra)
+
+
+
+
+library(extrafont)
+loadfonts(device = 'win', quiet = T)
+par(family = 'Liberation')
+windowsFonts(
+  serif = 'Liberation Serif',
+  sans = 'Liberation Sans',
+  mono = 'Liberation Mono'
+)
+
+par(family = 'sans')
+
+set.seed(1)
+
+prefix <- '110'
+output.dir <- file.path('output', prefix)
+Sys.setlocale("LC_ALL","Chinese")
+
+if (!dir.exists(output.dir)) {
+    dir.create(output.dir, recursive = T)
+}
+```
+
+```{r}
+file10 <- '../转录组/tissue.xlsx'
+
+d10 <- XLConnect::readWorksheetFromFile(
+  file10, 
+  sheet = 1,
+  check.names = F,
+  rownames = F,
+  startCol = 2
+) %>% dplyr::rename(
+  Pvalue = `Pvalue( (CF / MAT))`
+) %>% filter(
+  !is.na(Pvalue) &
+    Pvalue < 0.05
+)
+  
+  
+```
+
+
+```{r}
+library(AnnotationDbi)
+library(clusterProfiler)
+library(topGO)
+library(rlist)
+
+library(org.Hs.eg.db)
+
+############
+# 加载基因、orgdb
+############
+message("load gene/orgdb")
+gene     <- d10[, 'Gene ID']
+org_db <- org.Hs.eg.db
+
+############
+# GO富集分析
+############
+message("start GO analysis")
+message('CC')
+ego_cc <- enrichGO(gene          = gene,
+                   OrgDb         = org_db,
+                   ont           = "CC",
+                   pAdjustMethod = "BH",
+                   pvalueCutoff  = 0.05,
+                   qvalueCutoff  = 1,
+                   readable      = TRUE)
+message('BP')
+ego_bp <- enrichGO(gene          = gene,
+                   OrgDb         = org_db,
+                   ont           = "BP",
+                   pAdjustMethod = "BH",
+                   pvalueCutoff  = 0.05,
+                   qvalueCutoff  = 1,
+                   readable      = TRUE)
+message('MF')
+ego_mf <- enrichGO(gene          = gene,
+                   OrgDb         = org_db,
+                   ont           = "MF",
+                   pAdjustMethod = "BH",
+                   pvalueCutoff  = 0.05,
+                   qvalueCutoff  = 1,
+                   readable      = TRUE)
+
+############
+# BP/CC/MF 绘图
+############
+go.pdf <- file.path(output.dir, "enrich_go.pdf")
+                       
+cairo_pdf(go.pdf, onefile = T, w = 12, h = 5, family = 'sans')
+dotplot(ego_bp,showCategory=20)
+dotplot(ego_cc,showCategory=20)
+dotplot(ego_mf,showCategory=20)
+dev.off()
+
+go.xlsx <- file.path(output.dir, 'enrich_go.xlsx')
+
+wb <- XLConnect::loadWorkbook(go.xlsx, create = T)
+XLConnect::createSheet(wb, 'bp')
+XLConnect::writeWorksheet(wb, ego_bp, 'bp')
+
+XLConnect::createSheet(wb, 'cc')
+XLConnect::writeWorksheet(wb, ego_cc, 'cc')
+
+XLConnect::createSheet(wb, 'mf')
+XLConnect::writeWorksheet(wb, ego_mf, 'mf')
+
+XLConnect::saveWorkbook(wb)
+XLConnect::xlcFreeMemory()
+```
+
+```{r}
+############
+# KEGG分析
+############
+message("start KEGG analysis")
+
+file.kegg_enrichment <- file.path(output.dir, "enrichment_kegg.xls")
+
+kk <- enrichKEGG(gene         = gene,
+                 organism     = 'hsa',
+                 keyType = 'ncbi-geneid',
+                 pvalueCutoff = 0.05,
+                 qvalueCutoff = 1)
+
+# kk_enrich <- as.data.frame(kk)
+# kk_enrich$geneID <- unlist(lapply(1:length(kk_enrich$geneID), function(t){  paste(eg[[1]][eg[[2]] %in% unlist(strsplit(kk_enrich$geneID[t], "/"))], collapse = "/")  }))
+
+kegg_pdf <- file.path(output.dir, "enrichment_kegg.pdf")
+if(nrow(kk_enrich) >= 1){
+	cairo_pdf(kegg_pdf, onefile = T, height=5,width=12, family = 'sans')
+	dotplot(kk,showCategory=20) %>% print
+	dev.off()
+	XLConnect::writeWorksheetToFile(
+	  file.kegg_enrichment, kk_enrich, sheet = 'KEGG', rownames=F)
+}
+
+
+
+```
+

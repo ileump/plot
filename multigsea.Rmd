@@ -1,0 +1,383 @@
+---
+title: "Untitled"
+author: "leump"
+date: "2021/6/15"
+output: html_document
+---
+
+```{r, include=F, echo=F, message=F, warnings=F}
+options(java.parameters = '-Xmx8000m')
+source('Rscript/setup.R')
+source('Rscript/functions.R')
+source('Rscript/app_functions.R')
+source('rscript/pathway_funs.R', encoding = 'UTF-8')
+
+
+options(useFancyQuotes = FALSE)
+
+
+knitr::opts_chunk$set(
+  cache = T,
+  message = F,
+  dpi = 300
+)
+
+library(plyr)
+library(ggplot2)
+library(magrittr)
+library(MetaboAnalystR)
+library(kableExtra)
+library(limma)
+
+library(extrafont)
+loadfonts(device = 'win', quiet = T)
+par(family = 'Liberation')
+windowsFonts(
+  serif = 'Liberation Serif',
+  sans = 'Liberation Sans',
+  mono = 'Liberation Mono'
+)
+
+par(family = 'sans')
+
+set.seed(1)
+
+prefix <- '110'
+output.dir <- file.path('output', prefix)
+Sys.setlocale("LC_ALL","Chinese")
+
+if (!dir.exists(output.dir)) {
+    dir.create(output.dir, recursive = T)
+}
+```
+
+```{r, read data}
+# d10 <- XLConnect::readWorksheetFromFile(
+#   'data/20210401/2021-180-C-01 MS data-Statistical format.xlsx',
+#   sheet = 'data.csv',
+#   check.names = F,
+#   rownames = 1
+# )[1:80, ]
+
+d10 <- read.csv('/Users/leump/Desktop/plot/data/multigsea/data.csv',
+                check.names = F, row.names = 1)
+
+d10[d10 == 0] <- 0.5 * min(d10[d10 > 0])
+
+d10.log2 <- log2(d10)
+
+ds10 <- data.frame(
+  sample = rownames(d10)
+) %>%
+  mutate(
+    subject = stringi::stri_sub(sample, 1, 1) %>% factor,
+    timepoint = stringi::stri_sub(sample, 3, 3) %>% factor,
+    group = stringi::stri_sub(sample, 2, 2) %>% factor(levels = c('N', 'T'))
+  )
+
+data.metabolome <- read.csv('/Users/leump/Desktop/2020-153-C-02/data/WGCNA_data/metabo_blue.csv', 
+                            check.names = F, row.names = 1)
+data.rna <- read.csv('/Users/leump/Desktop/2020-153-C-02/data/WGCNA_data/rna_blue.csv', 
+                            check.names = F, row.names = 1)
+```
+
+```{r, fit2.single}
+timepoint <- paste0('T', ds10$timepoint)
+group <- ds10$group
+
+##------------------
+## single factor
+##------------------
+timepoint.group <- paste(timepoint, group, sep = '.') 
+design.single <- model.matrix(~0 + timepoint.group)
+colnames(design.single) %<>% stringi::stri_replace_all_fixed('timepoint.group', '')
+
+## multilevel
+corfit <- limma::duplicateCorrelation(t(d10.log2),design.single, block=ds10$subject)
+
+fit.single <- limma::lmFit(
+  t(d10.log2), 
+  design.single,
+  block = ds10$subject,
+  correlation = corfit$consensus.correlation
+)
+
+fit2.single <- makeContrasts(
+  # # 正常组织处理时间梯度对比
+  'T2.N - T1.N', 
+  'T3.N - T2.N',
+  'T4.N - T3.N',
+  'T5.N - T4.N',
+  'T6.N - T5.N',
+  'T7.N - T6.N',
+  'T8.N - T7.N',
+  levels = design.single
+) %>%
+  contrasts.fit(fit.single, contrasts = .) %>%
+  eBayes
+```
+
+```{r, multigsea}
+library(multiGSEA)
+library(metaboliteIDmapping)
+
+# 'kegg', 'panther', 'pathbank', 'pharmgkb', 'reactome', 'smpdb', 'wikipathways'
+
+databases <- c('kegg')
+organism <- 'hsapiens'
+organism <- 'mmusculus'
+
+pathways.graphite <- lapply(databases, function(x) {
+  graphite::pathways(organism, x)
+})
+names(pathways.graphite) <- databases
+
+d.pathway <- lapply(pathways.graphite, function(pathway.db) {
+  lapply(pathway.db, function(pathway) {
+    c(pathway@id, pathway@title, pathway@database)
+  }) %>% 
+  do.call(what = rbind) %>%
+    as.data.frame %>% 
+    magrittr::set_colnames(c('pathway_id', 'pathway_title', 'database')) %>%
+    dplyr::mutate(
+      name = sprintf('(%s) %s', database, pathway_title)
+    )
+  }) %>%
+  do.call(what = rbind) %>%
+  magrittr::set_rownames(NULL)
+
+
+d.metabolites <- purrr::map_dfr(pathways.graphite, function(pathway.db) {
+  lapply(pathway.db, function(pathway) {
+    native_id <- graphite::nodes(pathway, which = 'metabolites')
+    
+    if (length(native_id) > 0) {
+      data.frame(
+        database = pathway@database,
+        pathway_id = pathway@id,
+        pathway_title = pathway@title, 
+        native_id = native_id
+      )
+    } else {
+      NULL
+    }
+  }) %>% 
+    do.call(what = rbind)
+}) %>% 
+  magrittr::set_rownames(NULL) %>% 
+  dplyr::mutate(
+    KEGG = stringi::stri_extract_first_regex(native_id, '(?<=KEGGCOMP:)C[0-9]{5}$')
+  ) %>%
+  dplyr::left_join(
+    tidyr::drop_na(metabolitesMapping, KEGG), by = 'KEGG'
+  )
+
+layers <- c('transcriptome', 'metabolome')
+# layers <- 'transcriptome'
+
+pathways <- getMultiOmicsFeatures(
+  dbs = databases, layer = layers, 
+  returnTranscriptome = 'ENTREZID', 
+  # returnProteome = 'SYMBOL',
+  returnMetabolome = 'HMDB',
+  organism = "mmusculus"
+)
+
+d.transcriptome <- read.csv('/Users/leump/Desktop/rna_blue.csv', 
+                            check.names = F, row.names = 1)
+
+colnames(d.transcriptome) <- 'KO - WT'
+
+res.fgsea1 <- purrr::map(
+  colnames(d.transcriptome) %>% purrr::set_names(),
+  ~ d.transcriptome
+) %>%
+  purrr::imap(function(d.ht, contrast.name) {
+    t.stat <- d.ht %>% 
+      dplyr::mutate(
+        ENTREZID = rownames(d.transcriptome)
+      ) %>%
+      tidyr::drop_na(ENTREZID) %>% 
+      dplyr::pull('KO - WT', name = ENTREZID)
+    
+    set.seed(1)
+    fgsea::fgseaMultilevel(pathways$metabolome, t.stat, eps = 0) %>%
+      dplyr::mutate(
+        ## leadingEdge is a list
+        leadingEdge = purrr::map_chr(leadingEdge, ~ paste0(., collapse = ','))
+      )
+ })
+
+d.metabolome <- read.csv('/Users/leump/Desktop/metabo_blue.csv', 
+                            check.names = F, row.names = 1)
+
+colnames(d.metabolome) <- 'KO - WT'
+
+res.fgsea2 <- purrr::map(
+  colnames(d.metabolome) %>% purrr::set_names(),
+  ~ d.metabolome
+) %>%
+  purrr::imap(function(d.ht, contrast.name) {
+    t.stat <- d.ht %>% 
+      dplyr::mutate(
+        ENTREZID = rownames(d.metabolome)
+      ) %>%
+      tidyr::drop_na(ENTREZID) %>% 
+      dplyr::pull('KO - WT', name = ENTREZID)
+    
+    set.seed(1)
+    fgsea::fgseaMultilevel(pathways$metabolome, t.stat, eps = 0) %>%
+      dplyr::mutate(
+        ## leadingEdge is a list
+        leadingEdge = purrr::map_chr(leadingEdge, ~ paste0(., collapse = ','))
+      )
+ })
+
+
+res.fgsea <- purrr::map(
+  colnames(fit2.single$contrasts) %>% purrr::set_names(), 
+  ~ topTable(fit2.single, coef = ., number = Inf, adjust.method = 'BH')[
+    rownames(data.metabolome), ]
+    # colnames(data.metabolome$log2), ]
+)[
+  c('T2.N - T1.N', 
+    'T3.N - T2.N',
+    'T4.N - T3.N',
+    'T5.N - T4.N',
+    'T6.N - T5.N',
+    'T7.N - T6.N',
+    'T8.N - T7.N')
+] %>%
+  purrr::imap(function(d.limma, contrast.name) {
+    testthat::expect_equal(
+      rownames(d.limma), 
+      rownames(data.metabolome)
+    )
+    
+    t.stat <- d.limma %>% 
+      dplyr::mutate(
+        HMDB = data.metabolome$`HMDB ID`
+      ) %>%
+      tidyr::drop_na(HMDB) %>% 
+      dplyr::pull(t, name = HMDB)
+    
+    set.seed(1)
+    fgsea::fgseaMultilevel(pathways$metabolome, t.stat, eps = 0) %>%
+      dplyr::mutate(
+        ## leadingEdge is a list
+        leadingEdge = purrr::map_chr(leadingEdge, ~ paste0(., collapse = ','))
+      )
+  })
+
+output.dir.1 <- 'output/'
+
+dir.name <- file.path(output.dir.1, 'fgsea_matabolome')
+
+if (!dir.exists(dir.name)) {
+  dir.create(dir.name, recursive = T)
+}
+
+purrr::iwalk(res.fgsea2, function(x, contrast.name) {
+  file.csv <- file.path(dir.name, paste0('fgsea_', contrast.name, '.csv'))
+  
+  if (!file.exists(file.csv)) {
+    write.csv(x, file.csv)
+  }
+})
+
+
+l4 <- list(
+  'transcriptome' = res.fgsea1$`KO - WT`,
+  'metabolome' = res.fgsea2$`KO - WT`
+)
+
+df <- extractPvalues(enrichmentScores = l4,
+                     pathwayNames = names(pathways$transcriptome))
+
+
+## pathway column is not in df
+df$combined_pval <- combinePvalues(df)
+df$combined_padj <- p.adjust(df$combined_pval, method = 'BH')
+df$pathway <- names(pathways$transcriptome)
+
+
+df <- df[, 5:7] %>% data.frame()
+rownames(df) <- df$pathway
+df <- na.omit(df)
+
+write.csv(df, 'combined.csv', row.names = T)
+
+
+write.csv(d.pval.meta, 'pval.meta.csv', row.names = T)
+write.csv(d.pval.rna, 'pval.rna.csv', row.names = T)
+
+
+
+
+
+
+
+
+```
+
+```{r, dotplot}
+file.pdf <- file.path(dir.name, 'fgsea_KEGG_summary.pdf')
+
+if (!file.exists(file.pdf)) {
+  cairo_pdf(file.pdf, onefile = T, width = 16, height = 12)
+  
+  purrr::walk(c('pval', 'padj'), function(p) {
+    p_exp <- rlang::parse_expr(p)
+    
+    d1 <- purrr::imap_dfr(res.fgsea2, function(x, y) {
+      x %>% 
+        dplyr::select(pathway, !!p_exp, size) %>%
+        dplyr::mutate(
+          contrast = y, 
+          pathway = forcats::fct_reorder2(pathway, !!p_exp, -size)
+        )
+    })
+    
+    p1 <- ggplot(d1, aes(x = pathway, y = -log10(!!p_exp))) +
+      geom_point(aes(size = size, color = !!p_exp < 0.05)) + 
+      scale_color_manual(values = c('gray', 'red')) +
+      geom_hline(yintercept = -log10(0.05)) +
+      labs(x = '') +
+      coord_flip() + 
+      facet_wrap(~ contrast, nrow = 1) +
+      theme_bw()
+    
+    print(p1)
+  })
+  
+  dev.off()
+}
+
+
+
+p <- c('combined_pval', 'combined_padj')
+
+p_exp <- rlang::parse_expr(p)
+
+contrast <- 'KO - WT'
+file.pdf <- file.path(dir.name, 'fgsea_KEGG_summary.pdf')
+cairo_pdf(file.pdf, onefile = T, width = 16, height = 32)
+
+purrr::walk(c('combined_pval', 'combined_padj'), function(p) {
+p1 <- ggplot(df, aes(x = pathway, y = -log10(!!p_exp))) +
+  geom_point(aes(color = !!p_exp < 0.05)) + 
+  scale_color_manual(values = c('gray', 'red')) +
+  geom_hline(yintercept = -log10(0.05)) +
+  labs(x = '') +
+  coord_flip() + 
+  # facet_wrap(~ contrast, nrow = 1) +
+  theme_bw()
+
+print(p1)
+})
+dev.off()
+
+
+
+```
+
