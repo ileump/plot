@@ -1,0 +1,53 @@
+
+```{r}
+source('Rscript/setup.R')
+source('Rscript/functions.R')
+source('Rscript/app_functions.R')
+source('Rscript/app_functions_2.R')
+# source('Rscript/pathway_funs.R')
+library(ggplot2)
+library(ggsignif)
+```
+
+
+```{r}
+d10 <- read.csv("data/data.csv",header = T,sep = ",",row.names = 1,check.names = FALSE)
+s10 <- read.csv("data/sample.csv",header = T,sep = ",",row.names = 1,check.names = FALSE)
+v10 <- read.csv("data/var.csv",header = T,sep = ",",row.names = 1,check.names = FALSE)
+g <- factor(
+     s10$Group,
+     levels = dplyr::arrange(s10[!duplicated(s10$Group), ], Order)[, 'Group'])
+```
+
+```{r}
+ht <- hypothesisTest2(d10,g,test = 'Pairwise T')
+ht_slt <- ht[,c(1,14,23,28)]
+```
+
+```{r}
+bar_list <- lapply(colnames(d10),function(i){
+# p_matrix <- matrix(1,ncol=nlevels(group),nrow=nlevels(group),dimnames = list(levels(group),levels(g)))
+# p_matrix[lower.tri(p_matrix)] <- ht.out[i,stringr::str_detect(colnames(ht.out), "dunn")]%>%unlist
+# sig_letters <- multcompView::multcompLetters(p_matrix, threshold = 0.05)$Letters
+# g <- levels(g%>%as.factor)
+# height <- (vaggregate(d10[, i], g, mean_cl_normal)%>%unlist%>%max)*1.1
+# plot.labels <- data.frame(Group,height,sig_letters)
+ p <- ggplot(d10,aes(x=g,y=d10[,i]))+
+  # geom_bar(stat="identity")+
+ geom_boxplot(outlier.colour = "red",outlier.shape = 8,outlier.size = 4)+
+  labs(title=i,x=NULL,y=expression(paste("Relative expression")))+
+  theme_bw()+
+  geom_jitter(position=position_jitter(width=.1, height=0),size=2)+
+  geom_signif(comparisons = list(c("Cave-TEL","Surface-TEL"),
+                                 c("Cave-TEO","Surface-TEO"),
+                                 c("Cave-CC","Surface-CC"),
+                                 c("Cave-MO","Surface-MO")),test = t.test,textsize = 3)+
+  theme(axis.text.x = element_text(angle = 45,vjust = 1,hjust = 1)
+      # text = element_text(size=15)
+        )
+})
+cairo_pdf("qPCR boxplot.pdf",onefile = T,width = 3.5,height =4)
+print(bar_list)
+dev.off()
+```
+
