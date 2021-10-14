@@ -5,7 +5,7 @@ date: "10/8/2021"
 output: html_document
 ---
 
-```{r}
+```{r, warning=FALSE}
 source('Rscript/setup.R')
 source('Rscript/functions.R')
 source('Rscript/app_functions.R')
@@ -233,8 +233,15 @@ d10 <- read.csv("/Users/leump/Desktop/2021-098-A-02-II/code/data/data.csv",check
 s10 <- read.csv("/Users/leump/Desktop/2021-098-A-02-II/code/data/sample1.csv",check.names = F,row.names = 1)
 v10 <- read.csv("/Users/leump/Desktop/2021-098-A-02-II/code/data/var.csv",check.names = F,row.names = 1)
 
+
+
+
+
+
+
+
 g <- factor(s10$Group)
-j <- 6
+j <- 1
 g_pair <- combn(levels(g), 2)
 contrast <- paste0(rev(g_pair[, j]), collapse = ' vs ')
 
