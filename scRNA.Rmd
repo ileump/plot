@@ -1,0 +1,893 @@
+---
+title: "scRNA"
+author: "leump"
+date: "9/16/2021"
+output: html_document
+---
+
+```{r, include=F, echo=F, message=F, warnings=F}
+options(java.parameters = '-Xmx8000m')
+source('Rscript/setup.R')
+source('Rscript/functions.R')
+source('Rscript/app_functions.R')
+source('rscript/pathway_funs.R', encoding = 'UTF-8')
+
+options(useFancyQuotes = FALSE)
+options(stringsAsFactors = FALSE)
+
+knitr::opts_chunk$set(
+  cache = T,
+  message = F,
+  dpi = 300
+)
+
+library(plyr)
+library(ggplot2)
+library(magrittr)
+library(kableExtra)
+library(limma)
+library(WGCNA)
+library(multiGSEA)
+library(metaboliteIDmapping)
+library(reactome.db)
+library(GEOquery)
+library(ComplexHeatmap)
+library(AnnotationDbi)
+library(clusterProfiler)
+library(topGO)
+library(rlist)
+library(org.Mm.eg.db)
+library(edgeR)
+library(DESeq2)
+library(pathview)
+library(GOplot)
+library(Seurat)
+library(data.table)
+library(RColorBrewer)
+library(gplots)
+library(ggplot2)
+library(monocle)
+library(DoubletFinder)
+library(Matrix)
+library(corrplot)
+library(pheatmap)
+library(metap)
+
+
+# library(extrafont)
+# loadfonts(device = 'win', quiet = T)
+# par(family = 'Liberation')
+# windowsFonts(
+#   serif = 'Liberation Serif',
+#   sans = 'Liberation Sans',
+#   mono = 'Liberation Mono'
+# )
+
+par(family = 'sans')
+
+set.seed(1)
+
+prefix <- 'scRNA'
+output.dir <- file.path('output', prefix)
+
+if (!dir.exists(output.dir)) {
+    dir.create(output.dir, recursive = T)
+}
+```
+
+```{r, read data}
+#读入矩阵（文件夹中包含features/barcodes/maritx三个文件）
+WT <- Read10X(data.dir = "/Users/leump/Desktop/Piezo1/data/4 GSE155340/WT/")
+KO <- Read10X(data.dir = "/Users/leump/Desktop/Piezo1/data/4 GSE155340/KO/")
+#生成seurat object
+project_WT <- CreateSeuratObject(counts = WT, min.cells = 0, min.features = 0, project = "WT")
+project_KO <- CreateSeuratObject(counts = KO, min.cells = 0, min.features = 0, project = "KO")
+project_WT
+#27998 features across 3907 samples
+project_KO
+#27998 features across 1260 samples
+```
+
+```{r, QC}
+#检测线粒体基因含量
+project_WT[["nMT_RNA"]] <- Seurat::PercentageFeatureSet(project_WT, pattern = "^mt-")
+project_KO[["nMT_RNA"]] <- Seurat::PercentageFeatureSet(project_KO, pattern = "^mt-")
+
+output.dir.qc <- file.path(output.dir, paste0('QC'))
+if (!dir.exists(output.dir.qc)) {
+  dir.create(output.dir.qc, recursive = T)
+}   
+
+#生成两个样本的质控图
+sample <- "WT"
+file.pdf <- file.path(output.dir.qc, paste0(sample, '_', 'QC_metrics.violin.pdf'))
+pdf(file.pdf, width = 10, height = 6)
+VlnPlot(project_WT, features = c("nFeature_RNA", "nCount_RNA", "nMT_RNA"), ncol = 3)
+dev.off()
+sample <- "KO"
+file.pdf <- file.path(output.dir.qc, paste0(sample, '_', 'QC_metrics.violin.pdf'))
+pdf(file.pdf, width = 10, height = 6)
+VlnPlot(project_KO, features = c("nFeature_RNA", "nCount_RNA", "nMT_RNA"), ncol = 3)
+dev.off()
+#根据质控图过滤质量不好的细胞
+project_WT <- subset(project_WT, subset = nFeature_RNA > 200)
+project_WT
+#27998 features across 3897 samples
+project_WT <- subset(project_WT, subset = nMT_RNA < 10)
+project_WT
+#27998 features across 3896 samples
+project_KO <- subset(project_KO, subset = nFeature_RNA > 200)
+project_KO
+#27998 features across 1256 samples
+project_KO <- subset(project_KO, subset = nMT_RNA < 10)
+project_KO
+#27998 features across 1168 samples
+```
+
+```{r, cluster}
+#整合两个样本
+project_Sob <- merge(project_WT, project_KO)
+project_Sob
+#27998 features across 5064 samples
+#生成PCA降维文件夹
+
+output.dir.cluster <- file.path(output.dir, paste0('Cluster'))
+if (!dir.exists(output.dir.cluster)) {
+  dir.create(output.dir.cluster, recursive = T)
+} 
+
+output.dir.pca <- file.path(output.dir.cluster, paste0('PCA'))
+if (!dir.exists(output.dir.pca)) {
+  dir.create(output.dir.pca, recursive = T)
+} 
+
+output.dir.tsne <- file.path(output.dir.cluster, paste0('TSNE'))
+if (!dir.exists(output.dir.tsne)) {
+  dir.create(output.dir.tsne, recursive = T)
+} 
+
+output.dir.umap <- file.path(output.dir.cluster, paste0('UMAP'))
+if (!dir.exists(output.dir.umap)) {
+  dir.create(output.dir.umap, recursive = T)
+} 
+
+#数据标准化
+project_Sob <- NormalizeData(object = project_Sob, normalization.method = "LogNormalize")
+#寻找表达值高的基因进行后续PCA分析
+project_Sob <- FindVariableFeatures(project_Sob,selection.method = "vst", nfeatures = 2000)
+#可视化
+sample <- "sample"
+plot1 <- VariableFeaturePlot(project_Sob)
+top10 <- head(VariableFeatures(project_Sob), 10)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+
+file.pdf <- file.path(output.dir.pca, paste0(sample, '_', 'VariableFeatures.volcano.pdf'))
+pdf(file.pdf, width = 7, height = 4)
+plot2
+dev.off()
+rm(plot1)
+rm(plot2)
+gc()
+
+#生成PCA的gene table
+file.txt <- file.path(output.dir.pca, paste0(sample, '_', 'PCA.genes.txt'))
+write.table(VariableFeatures(project_Sob), file=file.txt, 
+            row.names = F, col.names =F)
+#将数据进行scale标准化
+project_Sob <- ScaleData(project_Sob)
+#采用PCA方法对数据进行降维处理
+project_Sob <- RunPCA(object = project_Sob, npcs = 50)
+#使用ScoreJackStraw方法确定后续TSNE分析所用的PC数
+project_Sob <- JackStraw(project_Sob, num.replicate = 100, dims = 50)
+project_Sob <- ScoreJackStraw(project_Sob, dims = 1:50)
+#PC可视化
+
+file.pdf <- file.path(output.dir.pca, paste0(sample, '_', 'PCA.JackStrawPlot.pdf'))
+pdf(file.pdf, width = 10, height = 5)
+JackStrawPlot(project_Sob, dims = 1:50)
+dev.off()
+
+file.pdf <- file.path(output.dir.pca, paste0(sample, '_', 'PCA.ElbowPlot.pdf'))
+pdf(file.pdf, width = 8, height = 5)
+ElbowPlot(project_Sob,ndims = 50)
+dev.off()
+
+file.pdf <- file.path(output.dir.pca, paste0(sample, '_', 'PCA.topGene.pdf'))
+pdf(file.pdf, width = 8, height = 5)
+VizDimLoadings(project_Sob, dims = 1:2, reduction = "pca")
+dev.off()
+
+project_Sob@reductions$pca@stdev
+percentVar= project_Sob@reductions$pca@stdev^2 / sum(project_Sob@reductions$pca@stdev^2)
+percentVar
+varsum=cumsum(percentVar)
+varsum
+#选择PC为11
+#TSNE分析
+#细胞聚类
+project_Sob <- FindNeighbors(project_Sob, reduction = "pca", dims = 1:11, k.param = 30)
+project_Sob <- FindClusters(project_Sob, resolution = 0.1)
+table(project_Sob@active.ident)
+#修改cluster标识（由1开始）
+cluster_add1_idents <- as.integer(project_Sob@active.ident)
+cluster_add1_idents <- factor(cluster_add1_idents,levels=1:length(unique(cluster_add1_idents)))
+names(cluster_add1_idents) <- rownames(project_Sob@meta.data)
+project_Sob@active.ident <- cluster_add1_idents
+project_Sob@meta.data$Cluster <- cluster_add1_idents
+head(project_Sob@meta.data)
+#生成每个细胞所属cluster的文件
+seurat_cluster = as.data.frame(project_Sob@meta.data)
+cluster <-  seurat_cluster[,c(1,7)]
+row.names(cluster) <- row.names(seurat_cluster)
+
+file.csv <- file.path(output.dir.tsne, paste0(sample, '_', 'seurat.cluster.r0.1.csv'))
+write.csv(cluster, file=file.csv, row.names=T)
+#细胞聚类可视化
+project_Sob <- RunTSNE(project_Sob, reduction = "pca",dims = 1:11,check_duplicates = FALSE)
+#生成每个细胞所在TSNE坐标的文件
+tsne_result <- project_Sob@reductions$tsne@cell.embeddings
+
+file.csv <- file.path(output.dir.tsne, paste0(sample, '_', 'seurat.tSNE.r0.1.csv'))
+write.csv(tsne_result, file = file.csv)
+#以sample为分类画图
+
+file.pdf <- file.path(output.dir.tsne, paste0(sample, '_', 'cluster.tSNE.bysample.pdf'))
+pdf(file.pdf, width = 6, height = 5)
+DimPlot(object = project_Sob, pt.size = 0.5,reduction = 'tsne', group.by = "orig.ident")+ggtitle("")
+dev.off()
+#以cluster为分类画图
+
+file.pdf <- file.path(output.dir.tsne, paste0(sample, '_', 'cluster.tSNE.r0.1.pdf'))
+pdf(file.pdf, width = 6, height = 5)
+DimPlot(project_Sob, cols=colorRampPalette(brewer.pal(8,'Set2'))(length(levels(project_Sob@meta.data$Cluster))),pt.size = 0.2,label = TRUE, reduction = "tsne", group.by = "Cluster",label.size = 8)+ggtitle("") 
+dev.off()
+#绘制PCA点图
+
+file.pdf <- file.path(output.dir.pca, paste0(sample, '_', 'PCA.Dimplot.pdf'))
+pdf(file.pdf, width = 6, height = 5)
+DimPlot(project_Sob,cols=colorRampPalette(brewer.pal(8,'Set2'))(length(levels(project_Sob@meta.data$Cluster))),reduction = "pca",group.by = 'Cluster')+ggtitle("")
+dev.off()
+#UMAP方法进行可视化和聚类
+
+project_Sob <- RunUMAP(project_Sob, reduction = "pca",dims = 1:22,check_duplicates = FALSE)
+#生成每个细胞所在UMAP坐标的文件
+umap_result <- project_Sob@reductions$umap@cell.embeddings
+
+file.csv <- file.path(output.dir.umap, paste0(sample, '_', 'seurat.UMAP.r0.1.csv'))
+write.csv(umap_result, file = file.csv)
+#以sample为分类
+file.pdf <- file.path(output.dir.umap, paste0(sample, '_', 'cluster.UMAP.bysample.pdf'))
+pdf(file.pdf, width = 6, height = 5)
+DimPlot(object = project_Sob, pt.size = 0.5,reduction = 'umap', group.by = "orig.ident")+ggtitle("")
+dev.off()
+
+file.pdf <- file.path(output.dir.umap, paste0(sample, '_', 'cluster.UMAP.r0.1.pdf'))
+pdf(file.pdf, width = 6, height = 5)
+DimPlot(project_Sob, cols=colorRampPalette(brewer.pal(8,'Set2'))(length(levels(project_Sob@meta.data$Cluster))),pt.size = 0.2,label = TRUE, reduction = "umap", group.by = "Cluster",label.size = 8) + ggtitle("") 
+dev.off()
+```
+
+```{r, CellMarker}
+#分析每个cluster的marker
+output.dir.cellmarker <- file.path(output.dir, paste0('CellMarker'))
+if (!dir.exists(output.dir.cellmarker)) {
+  dir.create(output.dir.cellmarker, recursive = T)
+} 
+
+output.dir.marker <- file.path(output.dir.cellmarker, paste0('marker'))
+if (!dir.exists(output.dir.marker)) {
+  dir.create(output.dir.marker, recursive = T)
+} 
+
+output.dir.marker_conserve <- file.path(output.dir.cellmarker, paste0('marker_conserve'))
+if (!dir.exists(output.dir.marker_conserve)) {
+  dir.create(output.dir.marker_conserve, recursive = T)
+} 
+
+diff <- FindAllMarkers(object = project_Sob, logfc.threshold = 0.25, only.pos = TRUE, test.use="bimod", min.pct = 0.1)
+project_Sob@misc[['Cluster_diff']] <- diff
+#生成每个cluster的marker的文件
+for(a_cluster in levels(project_Sob@active.ident))
+{
+  subdiff <- diff[diff$cluster == a_cluster,]
+  subdiff["Symbol"] <- subdiff$gene
+  subdata <- as.matrix(project_Sob@assays$RNA@data[subdiff$gene,])
+  subdata <- exp(subdata)-1
+  cluster_mean <- apply(subdata[,project_Sob@active.ident == a_cluster],1,mean)
+  cluster_other_mean <- apply(subdata[,project_Sob@active.ident != a_cluster],1,mean)
+  subdiff_info <- data.frame(Symbol=names(cluster_mean),Cluster_mean=cluster_mean,Cluster_other_mean=cluster_other_mean,Cluster_Log2_Fold_Change=log2(cluster_mean+1)-log2(cluster_other_mean+1))
+  subdiff_info <- merge(subdiff, subdiff_info, by.x = "gene", by.y = "Symbol", all.x = TRUE,sort=FALSE)
+  colnames(subdiff_info)[2] <- "Cluster_Pvalue"
+  colnames(subdiff_info)[6] <- "Cluster_AdjustPvalue"
+  subdiff_info <- subdiff_info[,c("gene","Cluster_mean","Cluster_other_mean","Cluster_Log2_Fold_Change","Cluster_Pvalue","Cluster_AdjustPvalue")]
+  colnames(subdiff_info)[1] <- "Symbol"
+  colnames(subdiff_info)[2] <- paste("Cluster_",a_cluster,"_mean",sep="")
+  colnames(subdiff_info)[3] <- paste("Cluster_",a_cluster,"_other_mean",sep="")
+  colnames(subdiff_info)[4] <- paste("Cluster_",a_cluster,"_Log2_Fold_Change",sep="")
+  colnames(subdiff_info)[5] <- paste("Cluster_",a_cluster,"_Pvalue",sep="")
+  colnames(subdiff_info)[6] <- paste("Cluster_",a_cluster,"_AdjustPvalue",sep="")
+
+  
+  file.xls <- file.path(output.dir.marker, 
+                        paste0(
+                          "Cluster", 
+                          a_cluster, "_diff.xls"))
+  write.table(subdiff_info, sep="\t", file=file.xls, row.names=FALSE, quote=FALSE)
+  n <- dim(subdiff_info)[2]
+  
+  file.xls <- file.path(output.dir.marker, 
+                        paste0(
+                          "Cluster", 
+                          a_cluster, "_diff_significant.xls"))
+  write.table(subdiff_info[subdiff_info[,(n-1)] <= 0.05 & abs(subdiff_info[,(n-2)]) >= 0.5,], sep="\t", file=file.xls, row.names=FALSE, quote=FALSE)
+}
+#保存RDS文件
+saveRDS(project_Sob, file=paste0(output.dir.marker_conserve, "/project_Sob.rds"))
+#得到symbol_cluster文件（每个cluster独有marker）
+diff_list <- list()
+for(a_cluster in levels(project_Sob@active.ident)) {
+  cluster_name <- paste("Cluster",a_cluster,sep="")
+  
+  file.table <- file.path(output.dir.marker, 
+                        paste0(
+                          "Cluster", 
+                          a_cluster, "_diff_significant.xls"))
+  diff_table <- read.table(file.table, sep="\t", header=TRUE)
+  diff_table <- diff_table[order(diff_table[,4],decreasing=TRUE),]
+  diff_list[[cluster_name]] <- as.vector(diff_table$Symbol)
+}
+cluster_specific_gids <- vector("list", length(diff_list))
+names(cluster_specific_gids) <- names(diff_list)
+for(a_cluster in names(cluster_specific_gids))
+{
+  a_cluster_syms <- diff_list[[a_cluster]]
+  other_gids <- NULL
+  for(b_cluster in names(diff_list)) 
+  {
+    if(a_cluster != b_cluster)
+    {
+      other_gids <- c(other_gids,diff_list[[b_cluster]])
+    }
+  }
+  other_gids <- unique(other_gids)
+  a_cluster_syms <- a_cluster_syms[!a_cluster_syms %in% other_gids]
+  if(length(a_cluster_syms) >= 5)
+  {
+    a_cluster_syms <- a_cluster_syms[1:5]
+  }
+  cluster_specific_gids[[a_cluster]] <- a_cluster_syms
+}
+
+symbols <- NULL
+cluster_names <- NULL
+for(index in 1:length(cluster_specific_gids))
+{
+  symbols <- c(symbols, cluster_specific_gids[[index]])
+  cluster_names <- c(cluster_names, rep(names(cluster_specific_gids)[index], length(cluster_specific_gids[[index]])))
+}
+symbol2cluster <- data.frame(Symbol=symbols, Cluster=cluster_names)
+project_Sob@misc[['Cluster_specific_genes']] <- symbol2cluster
+
+file.csv <- file.path(output.dir.marker, paste0('symbol2cluster.csv'))
+write.csv(symbol2cluster, file=file.csv, row.names = F)
+```
+
+```{r, Enrichment}
+output.dir.fun <- file.path(output.dir, paste0('FUN'))
+if (!dir.exists(output.dir.fun)) {
+  dir.create(output.dir.fun, recursive = T)
+} 
+
+output.dir.go <- file.path(output.dir.fun, paste0('GO'))
+if (!dir.exists(output.dir.go)) {
+  dir.create(output.dir.go, recursive = T)
+} 
+
+output.dir.kegg <- file.path(output.dir.fun, paste0('KEGG'))
+if (!dir.exists(output.dir.kegg)) {
+  dir.create(output.dir.kegg, recursive = T)
+} 
+
+#GOKEGG通路富集分析
+library(biomaRt)
+library(clusterProfiler)
+library(org.Mm.eg.db)
+library(dplyr)
+library(data.table)
+
+#下载KEGG通路文件
+rat_kegg <- clusterProfiler::download_KEGG("mmu")
+PATH2ID <- rat_kegg$KEGGPATHID2EXTID
+PATH2NAME <- rat_kegg$KEGGPATHID2NAME
+PATH_ID_NAME <- merge(PATH2ID, PATH2NAME, by="from")
+colnames(PATH_ID_NAME) <- c("KEGGID", "ENTREZID", "DESCRPTION")
+entrezgene <- PATH_ID_NAME$ENTREZID
+map_dt <- bitr(entrezgene, fromType = "ENTREZID",toType = c( "SYMBOL"),OrgDb = org.Mm.eg.db)
+PATH_ID_NAME <- merge(PATH_ID_NAME, map_dt, by= "ENTREZID")
+
+#每个cluster的marker标注GO和KEGG通路
+for(a_cluster in 1:7){
+  cluster_name <- paste("Cluster",a_cluster,sep="")
+  
+  file.table <- file.path(output.dir.marker, 
+                        paste0(
+                          "Cluster", 
+                          a_cluster, "_diff_significant.xls"))
+  diff_table <- read.table(file.table, sep="\t", header=TRUE)
+  cluster_diff <- diff_table
+  cluster_diff <- arrange(cluster_diff,Symbol)
+  genes_diff = cluster_diff$Symbol
+  list_diff=AnnotationDbi::select(org.Mm.eg.db,keys=genes_diff,columns = c("GENENAME","SYMBOL","GO"), keytype="SYMBOL")
+  GOid=list_diff$GO
+  GOterm=go2term(GOid)
+  names(GOterm) <- c("GO","Term")
+  merge_diff <- merge(list_diff,GOterm,by="GO")
+  merge <- merge_diff[,c(2,3,1,5,6)]
+  merge <- arrange(merge, SYMBOL, ONTOLOGY)
+  merge[,6] <- paste(merge$SYMBOL,merge$GO,sep = "")
+  merge <- merge[!duplicated(merge$V6), ]
+  merge <- merge[,-6]
+  merge$GO_Term <- paste(merge$GO,"~",merge$Term,"(",merge$ONTOLOGY,")",sep = "")
+  a <-c()
+  b <-c()
+  file_final <- data.frame()
+  dup<-data.frame(table(merge$SYMBOL))
+  dup<-subset(dup,dup$Freq>1)
+  for(i in 1:nrow(dup)) 
+  {row_number <- which(merge$SYMBOL==dup[i,1]) 
+  duplicate <- merge[row_number,] 
+  a <- c()
+  for (m in 1:nrow(duplicate)){
+    GOname <- duplicate[m,6]
+    GOname <- as.vector(GOname)
+    a <- c(a,GOname)
+  }
+  b <- c()
+  b <- c(a[1])
+  for (n in 2:length(a)) {
+    b <- paste(b,a[n],sep = ";")
+  }
+  file = data.frame(SYMBOL=duplicate[1,1],GENENAME=duplicate[1,2],GO_Term=b) 
+  file_final <- rbind(file_final,file) 
+  }
+  
+  KEGG_file <-  PATH_ID_NAME[PATH_ID_NAME$SYMBOL %in% genes_diff,]
+  KEGG_merge <- KEGG_file[,c(4,2,3)]
+  KEGG_merge <- arrange(KEGG_merge,SYMBOL)
+  KEGG_merge[,4] <- paste(KEGG_merge$SYMBOL,KEGG_merge$KEGGID,sep = "")
+  KEGG_merge <- KEGG_merge[!duplicated(KEGG_merge$V4), ]
+  KEGG_merge <- KEGG_merge[,-4]
+  KEGG_merge$Pathway <- paste(KEGG_merge$KEGGID,"~",KEGG_merge$DESCRPTION,sep = "")
+  a <-c()
+  b <-c()
+  file_final_KEGG <- data.frame()
+  dup <- data.frame(table(KEGG_merge$SYMBOL))
+  dup<-subset(dup,dup$Freq>1)
+  for(i in 1:nrow(dup)) 
+  {row_number <- which(KEGG_merge$SYMBOL==dup[i,1]) 
+  duplicate <- KEGG_merge[row_number,]
+  a <- c()
+  for (m in 1:nrow(duplicate)){
+    GOname <- duplicate[m,4]
+    GOname <- as.vector(GOname)
+    a <- c(a,GOname)
+  }
+  b <- c()
+  b <- c(a[1])
+  for (n in 2:length(a)) {
+    b <- paste(b,a[n],sep = ";")
+  }
+  file = data.frame(SYMBOL=duplicate[1,1],Pathway=b) 
+  file_final_KEGG <- rbind(file_final_KEGG,file) #鐏忓摼uplicate閸旂姴婀猤ene閻ㄥ嫭娓堕崥搴濈鐞涘奔鑵?
+  }
+  file_all <- data.frame()
+  file_all <- merge(file_final,file_final_KEGG,by="SYMBOL",all=T)
+  names(file_all) <- c("Symbol","Genename","GO_Term","KEGG_pathway")
+  finalfile <- data.frame()
+  finalfile <- merge(cluster_diff,file_all,by="Symbol",all=T)
+  
+  file.csv <- file.path(output.dir.fun, paste("Cluster",a_cluster,"_diff_significant_db.csv",sep = ""))
+  write.csv(finalfile,file=file.csv, row.names=F)
+  
+}
+
+#GOKEGG富集分析
+library(biomaRt)
+library(clusterProfiler)
+library(org.Mm.eg.db)
+library(ggplot2)
+library(dplyr)
+library(KEGG.db)
+library(stringr)
+k=keys(org.Mm.eg.db,keytype = "SYMBOL")
+list=AnnotationDbi::select(org.Mm.eg.db,keys=k,columns = c("ENTREZID","SYMBOL"), keytype="SYMBOL")
+#循环，每个cluster进行GO和KEGG富集分析
+for(a_cluster in levels(project_Sob@active.ident)) {
+  
+  cluster_name <- paste("Cluster",a_cluster,sep="")
+  
+  
+  file.table <- file.path(output.dir.marker, 
+                        paste0(
+                          "Cluster", 
+                          a_cluster, "_diff_significant.xls"))
+  diff_table <- read.table(file.table, sep="\t", header=TRUE)
+  
+  genelist <- diff_table$Symbol 
+  
+  ID_list=list[match(genelist,list[,"SYMBOL"]),]
+  
+  genes <- ID_list$ENTREZID
+  
+  go <- enrichGO(genes, OrgDb = org.Mm.eg.db, ont='ALL',pAdjustMethod = 'BH',pvalueCutoff = 1, qvalueCutoff = 1,keyType = 'ENTREZID', readable = TRUE)  
+  
+  file.csv <- file.path(output.dir.go, paste("Cluster",a_cluster,"_GO_enrichment.csv",sep = ""))
+  write.csv(go, file = file.csv, row.names=F)  
+  
+  kegg <- enrichKEGG(genes, organism = 'mmu', keyType = 'kegg', pvalueCutoff = 1,pAdjustMethod = 'BH', qvalueCutoff = 1)  
+  
+  kegg <- setReadable(kegg, OrgDb = org.Mm.eg.db, keyType="ENTREZID") 
+  
+  file.csv <- file.path(output.dir.kegg, paste("Cluster",a_cluster,"_KEGG_enrichment.csv",sep = ""))
+  write.csv(kegg, file=file.csv, row.names=F)
+  
+}
+
+#将GO表格转换为标准格式
+for (n in levels(project_Sob@active.ident)) 
+{
+  file <- read.csv(paste(output.dir.go,
+                         "/", "Cluster",n,"_GO_enrichment.csv",sep=""),sep = ",",header = T)
+  GO = file
+  GO$gene <- gsub("^.*/","",GO$GeneRatio)
+  GO$gene <- as.numeric(GO$gene)
+  GO$Percentage <- GO$Count/GO$gene
+  GO_table <- GO[,c(2,3,1,10,12,4,5,9,6,7,8)]
+  GO_col_name <- c("GO_ID","GO_term","GO_category","Num_of_symbols_in_list_in_GO","Percentage_of_symbols_in_list","GeneRatio","BgRatio","Symbols_in_list","pvalue","p.adjust","qvalue");
+  names(GO_table) <- GO_col_name;
+  GO_table <- arrange(GO_table, GO_category, pvalue);
+  
+  file.csv <- file.path(output.dir.go, paste("Cluster",n,"_GO_enrichment.csv",sep = ""))
+  write.csv(GO_table, file = file.csv, row.names = F)}
+
+#将KEGG表格转换为标准格式
+for (n in levels(project_Sob@active.ident)) 
+{
+  file <- read.csv(paste(output.dir.kegg,
+                         "/", "Cluster",n,"_KEGG_enrichment.csv",sep=""),sep = ",",header = T)
+  KEGG <- file
+  KEGG$gene <- gsub("^.*/","",KEGG$GeneRatio);
+  KEGG$gene <- as.numeric(KEGG$gene);
+  KEGG$Percentage <- KEGG$Count/KEGG$gene;
+  KEGG_table <- KEGG[,c(1,2,9,11,3,4,8,5,6,7)];
+  KEGG_col_name <- c("ID","Path_term","Num_of_symbols_in_list_in_KEGG","Percentage_of_symbols_in_list","GeneRatio","BgRatio","Symbols_in_list","pvalue","p.adjust","qvalue");
+  names(KEGG_table) <- KEGG_col_name;
+  KEGG_table <- arrange(KEGG_table, pvalue);
+  file.csv <- file.path(output.dir.kegg, paste("Cluster",n,"_KEGG_enrichment.csv",sep = ""))
+  write.csv(KEGG_table, file = file.csv, row.names = F)
+}
+#根据GO表格绘图，选择p小于0.05的通路，每个层次取前十条
+for (n in levels(project_Sob@active.ident)) 
+{
+  GO_table <- read.csv(paste(output.dir.go,
+                             '/', "Cluster",n,"_GO_enrichment.csv",sep=""),sep = ",",header = T);
+  GO_part <- GO_table[GO_table$pvalue<0.05,];
+  GO_BP <- GO_part[GO_part$GO_category=="BP",];
+  GO_CC <- GO_part[GO_part$GO_category=="CC",];
+  GO_MF <- GO_part[GO_part$GO_category=="MF",];
+  if (nrow(GO_BP) < 10) {GO_BP_top10 <- GO_BP} else {GO_BP_top10 <- GO_BP[1:10,]};
+  if (nrow(GO_CC) < 10) {GO_CC_top10 <- GO_CC} else {GO_CC_top10 <- GO_CC[1:10,]};
+  if (nrow(GO_MF) < 10) {GO_MF_top10 <- GO_MF} else {GO_MF_top10 <- GO_MF[1:10,]};
+  
+  go_draw <- rbind(GO_BP_top10,GO_CC_top10,GO_MF_top10);
+  go_draw$p <- -log(go_draw$pvalue,base = 10);
+  go_draw$GO_term <- factor(go_draw$GO_term,levels = go_draw$GO_term);
+  go_draw$GO_category <- factor(go_draw$GO_category, levels = c("MF","CC","BP"))
+  x3 <- ggplot(data=go_draw,aes(x=GO_term,y=p,fill=GO_category)) + scale_fill_manual(values =c("#4DAF4A","#2E80C4", "#E51829")) + facet_grid(GO_category~.,scales = "free")
+  x3 <- x3+geom_bar(stat = "identity")+coord_flip()
+  x3 <- x3 + theme_bw()
+  x3 <- x3 + theme(axis.title = element_text(size = 20), axis.text.x=element_text(size = 18), axis.text.y=element_text(size = 18))
+  x3 <- x3 + theme(axis.line = element_line(size = 1.2), axis.ticks = element_line(size=1.2), axis.ticks.length = unit(0.1,'cm'))
+  x3 <- x3 + theme(legend.position = "none")
+  x3 <- x3+theme(axis.text.x = element_text(size = 16),axis.text.y  = element_text(size = 16))+ylab("Negative Log10 pvalue") + theme(axis.title.y  = element_text(size = 20))+xlab("") + theme(axis.title.x   = element_text(size = 20))
+  x3 <- x3 + theme(strip.text.y = element_text(size = 16))
+  
+  file.pdf <- file.path(output.dir.go, paste("Cluster",n,"_GO_barplot.pdf",sep=""))
+  ggsave(x3,file=file.pdf,width = 13,height = 8,dpi=300);
+  
+  order <- sort(go_draw$Percentage_of_symbols_in_list,index.return=TRUE,decreasing = TRUE);
+  go_draw$GO_term <- factor(go_draw$GO_term, levels = go_draw$GO_term[order$ix]);
+  go_dotplot=ggplot(go_draw,aes(Percentage_of_symbols_in_list,GO_term))
+  d1 <- go_dotplot+geom_point(aes(size=Num_of_symbols_in_list_in_GO,shape=GO_category,color=p)) + facet_grid(GO_category~.,scales = "free")
+  d2 <- d1+labs(color=expression(-log10(pvalue)),size="gene_number",x="rich factor",y="")
+  d3 <- d2 + scale_color_gradient(high = "#FD0003", low = "#0200FE")
+  d4 <- d3 + theme_bw()
+  d5 <- d4 + theme(axis.title = element_text(size = 20), axis.text.x=element_text(size = 18), axis.text.y=element_text(size = 18))
+  d6 <- d5 + theme(axis.line = element_line(size = 1.2), axis.ticks = element_line(size=1.2), axis.ticks.length = unit(0.1,'cm'))
+  d7 <- d6 + theme(legend.text = element_text(size=16), legend.title = element_text(size=16))
+  d8 <- d7 + theme(strip.text = element_text(size = 16),axis.text.x = element_text(angle = 45, hjust = 1) )
+  
+  file.pdf <- file.path(output.dir.go, paste("Cluster",n,"_GO_dotplot.pdf",sep=""))
+  ggsave(d8,file=file.pdf,width = 13,height = 8,dpi=300);
+  
+}
+#根据KEGG表格绘图，选择p小于0.05的通路，取前二十条
+for (n in levels(project_Sob@active.ident))
+{
+  file <- read.csv(paste(output.dir.kegg,
+                         '/', "Cluster",n,"_KEGG_enrichment.csv",sep=""),sep = ",",header = T); 
+  KEGG_table <- file;
+  KEGG_part <- KEGG_table[KEGG_table$pvalue<0.05,];
+  if (nrow(KEGG_part) < 20){kegg_draw <- KEGG_part} else {kegg_draw <- KEGG_part[1:20,]};
+  kegg_draw$p <- -log(kegg_draw$pvalue,base = 10);
+  order <- sort(kegg_draw$p,index.return=TRUE,decreasing = TRUE);
+  kegg_draw$Path_term <- factor(kegg_draw$Path_term, levels = kegg_draw$Path_term[order$ix]);
+  x2 <- ggplot(data=kegg_draw,aes(x=Path_term,y=p))
+  x2 <- x2 + geom_bar(stat = "identity",fill="#2E80C4")+coord_flip()
+  x2 <- x2 + theme_bw()
+  x2 <- x2 + theme(axis.title = element_text(size = 20), axis.text.x=element_text(size = 20), axis.text.y=element_text(size = 19)) + ylab("Negative Log10 pvalue") + xlab("")
+  x2 <- x2 + theme(axis.line = element_line(size = 1.2), axis.ticks = element_line(size=1.2), axis.ticks.length = unit(0.1,'cm'))
+  x2 <- x2 + theme(legend.text = element_text(size=17), legend.title = element_text(size=17))
+  
+  file.pdf <- file.path(output.dir.kegg, paste("Cluster",n,"_KEGG_barplot.pdf",sep=""))
+  ggsave(x2,file=file.pdf,width = 13,height = 8,dpi=300)
+  
+  
+  
+  order <- sort(kegg_draw$Percentage_of_symbols_in_list,index.return=TRUE,decreasing = TRUE);
+  kegg_draw$Path_term <- factor(kegg_draw$Path_term, levels = kegg_draw$Path_term[order$ix]);
+  kegg_dotplot=ggplot(kegg_draw,aes(Percentage_of_symbols_in_list, Path_term))
+  y1 <- kegg_dotplot+geom_point(aes(size=Num_of_symbols_in_list_in_KEGG,color=p))
+  y2 <- y1 + labs(color=expression(-log10(pvalue)),size="gene_number",x="rich factor",y="")
+  y3 <- y2 + scale_color_gradient(high = "#FD0003", low = "#0200FE")
+  y4 <- y3 + theme_bw()
+  y5 <- y4 + theme(axis.title = element_text(size = 20), axis.text.x=element_text(size = 20), axis.text.y=element_text(size = 19))
+  y6 <- y5 + theme(axis.line = element_line(size = 1.2), axis.ticks = element_line(size=1.2), axis.ticks.length = unit(0.1,'cm'))
+  y7 <- y6 + theme(legend.text = element_text(size=17), legend.title = element_text(size=17), axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  file.pdf <- file.path(output.dir.kegg, paste("Cluster",n,"_KEGG_dotplot.pdf",sep=""))
+  ggsave(y7,file=file.pdf,width = 13,height = 8, dpi=300)
+  
+  
+}
+```
+
+```{r}
+#添加细胞类型注释
+Idents(project_Sob) <- "seurat_clusters" 
+celltype <- as.integer(project_Sob@active.ident)
+celltype <- factor(celltype,levels=1:length(unique(celltype)))
+names(celltype) <- rownames(project_Sob@meta.data)
+project_Sob@active.ident <- celltype
+project_Sob@meta.data$celltype <- celltype
+Idents(project_Sob) <- "celltype" 
+project_Sob <- RenameIdents(project_Sob, "1" = "Neutrophil", "2" = "GMP", "3" = "Monocytes", 
+                            "4" = "CDP", "5" = "Macrophage", "6" = "MDP", "7" = "GMP")
+#绘制标注细胞类型的TSNE图
+file.pdf <- file.path(output.dir.tsne, paste0(sample, '_', 'cluster.tSNE.celltype.r0.1.pdf'))
+pdf(file.pdf, width = 6, height = 5)
+DimPlot(project_Sob, cols=colorRampPalette(brewer.pal(8,'Set2'))(length(levels(project_Sob@meta.data$Cluster))),pt.size = 0.2,label = TRUE, reduction = "tsne",label.size = 4)+ggtitle("") 
+dev.off()
+```
+
+
+```{r, GO rich}
+z <- 7
+contrast <- c("Neutrophil", 
+              "GMP", 
+              "Monocytes", 
+              "CDP", 
+              "Macrophage", 
+              "MDP", 
+              "GMP")[z]
+differ <- c('up', 'down')[2]
+diff_stat <- read.csv(paste0('/Users/leump/Desktop/scRNA/output/4 FUN/ClusterProfler/', 
+                            'Cluster', z, '_diff_significant_db.csv'), 
+                      row.names = 1, check.names = F)
+
+diff_stat[which(diff_stat[, 5] < 0.05 & diff_stat[, 3] > 1), 'diff'] <- 'up'
+diff_stat[which(diff_stat[, 5] < 0.05 & diff_stat[, 3] < 1), 'diff'] <- 'down'
+diff_stat[!(diff_stat$diff %in% c('up', 'down')),'diff'] <- 'no'
+
+diff_stat_differ <- subset(diff_stat, diff_stat$diff == differ)
+selected <- rownames(diff_stat_differ)
+length(selected)
+
+output.dir.cp <- file.path(output.dir, paste0(z, '_', contrast))
+dir.name <- file.path(output.dir.cp, paste0('clusterProfiler', '/', differ))
+if (!dir.exists(dir.name)) {
+  dir.create(dir.name, recursive = T)
+}
+
+gene <- selected
+org_db <- org.Mm.eg.db
+
+############
+# 基因SYMBOL 转 ENTREZID
+############
+message("convert SYMBOL to ENTREZID")
+eg   <- bitr(gene, fromType="SYMBOL", toType="ENTREZID", OrgDb=org_db)
+gene <- eg[[2]]  # ENTREZID
+
+message("start GO analysis")
+message('CC')
+ego_cc <- enrichGO(gene          = gene,
+                   OrgDb         = org_db,
+                   ont           = "CC",
+                   pAdjustMethod = "none",
+                   pvalueCutoff  = 0.05,
+                   qvalueCutoff  = 1,
+                   readable      = TRUE)
+message('BP')
+ego_bp <- enrichGO(gene          = gene,
+                   OrgDb         = org_db,
+                   ont           = "BP",
+                   pAdjustMethod = "none",
+                   pvalueCutoff  = 0.05,
+                   qvalueCutoff  = 1,
+                   readable      = TRUE)
+message('MF')
+ego_mf <- enrichGO(gene          = gene,
+                   OrgDb         = org_db,
+                   ont           = "MF",
+                   pAdjustMethod = "none",
+                   pvalueCutoff  = 0.05,
+                   qvalueCutoff  = 1,
+                   readable      = TRUE)
+
+res_cc <- dplyr::filter(ego_cc, grepl('membrane|pathway', ego_cc@result$Description) & ego_cc@result$pvalue < 0.05)
+res_bp <- dplyr::filter(ego_bp, grepl('membrane|pathway', ego_bp@result$Description) & ego_bp@result$pvalue < 0.05)
+res_mf <- dplyr::filter(ego_mf, grepl('membrane|pathway', ego_mf@result$Description) & ego_mf@result$pvalue < 0.05)
+
+# ##可视化--点图
+# dotplot(res_cc,
+#         color = "p.adjust",
+#         title="EnrichmentGO_CC_dot")
+
+############
+# BP/CC/MF 绘图
+############
+go_bp_pdf          <- paste(dir.name, "go.bp.pdf", sep="/")
+go_cc_pdf          <- paste(dir.name, "go.cc.pdf", sep="/")
+go_mf_pdf          <- paste(dir.name, "go.mf.pdf", sep="/")
+
+pdf(go_bp_pdf)
+plotGOgraph(res_bp)
+dev.off()
+
+pdf(go_cc_pdf)
+plotGOgraph(res_cc)
+dev.off()
+
+pdf(go_mf_pdf)
+plotGOgraph(res_mf)
+dev.off()
+
+############
+# GO 富集分析结果汇总输出
+############
+cc <- as.data.frame(res_cc)
+if(nrow(cc) >= 1) cc$Type <- "CC"
+
+bp <- as.data.frame(res_bp)
+if(nrow(bp) >= 1) bp$Type <- "BP"
+
+mf <- as.data.frame(res_mf)
+if(nrow(mf) >= 1) mf$Type <- "MF"
+go_enrichment   <- paste(dir.name, "go_enrichment.xls", sep="/")
+res <- rbind(bp, cc, mf)
+
+if(nrow(res) >= 1) write.table(res, go_enrichment, sep="\t", quote=F, row.names=F)
+
+############
+# BP/CC/MF top20 绘图
+############
+ego <- res
+types       <- unique(ego$Type)
+DataForPlot <- list()
+for(j in 1:length(types)){
+    DataForPlot[[j]] <-  ego[grep(types[j],ego$Type),]
+    # 展示最显著的topN个
+    TopN <- 10
+    if(nrow(DataForPlot[[j]]) < TopN){
+        DataForPlot[[j]] <- DataForPlot[[j]][c(1:nrow(DataForPlot[[j]])), c(2,5,9,10)]
+        DataForPlot[[j]] <- DataForPlot[[j]][order(DataForPlot[[j]]$pvalue, decreasing = T), ]
+    }else{
+        DataForPlot[[j]]=DataForPlot[[j]][c(1:TopN),c(2,5,9,10)]
+        DataForPlot[[j]]=DataForPlot[[j]][order(DataForPlot[[j]]$pvalue,decreasing = T),]
+    }          
+}
+
+GO <- list.rbind(DataForPlot)     # rbind all elements in a list by row
+
+go_bar <- paste(dir.name, "GO_barplot.pdf", sep="/")
+color  <- colorRampPalette(c("Goldenrod1","Tomato1","MediumPurple4"))(length(unique(GO$Type)))
+color1 <- rep(color,as.numeric(table(GO$Type)))
+
+pdf(go_bar, width=15, height=8)
+if(max(nchar(GO$Description)) >= 100){
+	layout(matrix(c(3,2,1), nrow = 1, byrow = T),widths = c(1.2,0.1,1))
+}else{
+	layout(matrix(c(3,2,1), nrow = 1, byrow = T),widths = c(0.8,0.1,1))
+}
+
+par(mar = c(5,0.1, 1, 3))
+gobar <- barplot(GO$Count, plot=T, 
+        cex.lab=1, las=1, ps=0.5, border = F,
+        xlim=c(0,max(GO$Count)*1.25),
+        #xaxt= "n", 
+        cex.names=0.8, axis.lty=1, 
+        axes=TRUE,col=color1,horiz=T,
+        mgp=c(0,-0.5,-1))
+text(cex = 1, y = gobar, x = GO$Count+max(GO$Count)/35, lab=c(GO$Count))
+#axis(side = 1, at =c(0,max(GO$Count)*1.25),labels = c("0","Gene Number"))
+title(xlab = "Gene Number",line = 1, cex.lab = 1.2)
+legend("topright", legend=unique(GO$Type),bty="n",fill=color,cex = 1.2)
+y1 = par("usr")[3]
+y2 = par("usr")[4]
+
+par(mar = c(5,0, 1, 0))
+p = log10(GO$pvalue)
+p_bar = barplot(p,horiz=T,col="PaleGreen3",border = NA, xaxt= "n")
+max = format(max(GO$pvalue),scientific=TRUE,digit=2)
+axis(side = 1, line = -1, at = c(0, unique(c(0,ceiling(min(p))))), labels = T)
+title(xlab = "log10(pvalue)",line = 0.91, cex.lab = 1)
+
+par(mar = c(5,3, 1, 1))
+a = plot(1:5,ylim = c(y1,y2),type = "n", xaxs = "i", yaxs = "i", axes=F, xlab="",ylab="")
+for(i in 1:length(GO$Description)){
+    text(x = 5 ,y = gobar[i], labels = GO$Description[i], cex = 1.8, adj = 1)
+}
+dev.off()
+
+############
+# KEGG分析
+############
+message("start KEGG analysis")
+
+kegg_enrichment <- paste(dir.name, "kegg_enrichment.xls", sep="/")
+
+kk <- enrichKEGG(gene         = gene,
+                 organism     = 'mmu',
+                 # keyType = 'ncbi-geneid',
+                 pvalueCutoff = 1,
+		             qvalueCutoff = 1)
+kk_enrich <- as.data.frame(kk)
+kk_enrich$geneID <- unlist(lapply(1:length(kk_enrich$geneID), function(t){  paste(eg[[1]][eg[[2]] %in% unlist(strsplit(kk_enrich$geneID[t], "/"))], collapse = "/")  }))
+
+kegg_pdf <- paste(dir.name, "kegg_dotplot.pdf", sep="/")
+if(nrow(kk_enrich) >= 1){
+	pdf(kegg_pdf,height=7,width=12)
+	p <-dotplot(kk)
+	print(p)
+	dev.off()
+	write.table(kk_enrich, kegg_enrichment, sep="\t", quote=F, row.names=F)
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
