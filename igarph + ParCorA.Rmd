@@ -1,0 +1,458 @@
+# 110-Correlation network
+
+Plot correlation network.
+
+```{r, include=F, echo=F, message=F, warnings=F}
+options(java.parameters = '-Xmx8000m')
+source('Rscript/setup.R')
+source('Rscript/functions.R')
+source('Rscript/app_functions.R')
+source('rscript/pathway_funs.R', encoding = 'UTF-8')
+
+
+options(useFancyQuotes = FALSE)
+
+
+knitr::opts_chunk$set(
+  cache = T,
+  message = F,
+  dpi = 300
+)
+
+library(plyr)
+library(ggplot2)
+library(magrittr)
+# library(MetaboAnalystR)
+library(kableExtra)
+library(dplyr)
+
+
+library(extrafont)
+loadfonts(device = 'win', quiet = T)
+par(family = 'Liberation')
+windowsFonts(
+  serif = 'Liberation Serif',
+  sans = 'Liberation Sans',
+  mono = 'Liberation Mono'
+)
+
+par(family = 'sans')
+
+set.seed(1)
+
+prefix <- '110'
+output.dir <- file.path('output', prefix)
+Sys.setlocale("LC_ALL","Chinese")
+
+if (!dir.exists(output.dir)) {
+    dir.create(output.dir, recursive = T)
+}
+```
+
+```{r load-data}
+d10 <- XLConnect::readWorksheetFromFile(
+  'data/20200104/8_networkanalysis.xlsx',
+  sheet = 'Sheet1',
+  header = T,
+  check.names = F,
+  rownames = F
+)
+```
+
+```{r hypothesis test}
+## wilcox for discovery and validation
+ht.res <- d10 %>%
+  group_by(set) %>%
+  summarise(
+    across(CE:TAG540180, function(x) { wilcox.test(x ~ subgrp)$p.value })
+  ) %>%
+  tibble::column_to_rownames('set') %>%
+  t %>%
+  as.data.frame %>%
+  tibble::rownames_to_column('term') %>%
+  mutate(
+    fdr.discovery = p.adjust(discovery, method = 'bonferroni'),
+    fdr.validation = p.adjust(validation, method = 'bonferroni')
+  )
+
+
+```
+
+
+## 测试ParCorA的combined partial correlation如何计算。
+
+```{r, eval=F}
+d20 <- read.table(
+  'ParCorA/data.txt',
+  header = T,
+  row.names = 1
+  ) %>% t
+
+cor20 <- cor(d20)
+
+p5 <- psych::partial.r(cor20, c(1,2,3,4), 5)
+p4 <- psych::partial.r(cor20, c(1,2,3,5), 4)
+p3 <- psych::partial.r(cor20, c(1,2,4,5), 3)
+p2 <- psych::partial.r(cor20, c(1,3,4,5), 2)
+p1 <- psych::partial.r(cor20, c(2,3,4,5), 1)
+
+
+p1 <- partial.rn(d20, n = 1, adjust = 'none')
+p2 <- partial.rn(d20, n = 2, adjust = 'none')
+s1 <- partial.rn(d20, n = 1, method = 'spearman', adjust = 'none')
+s2 <- partial.rn(d20, n = 2, method = 'spearman', adjust = 'none')
+
+p45 <- psych::partial.r(cor20, c(1,2,3), c(4, 5))
+p35 <- psych::partial.r(cor20, c(1,2,4), c(3, 5))
+p25 <- psych::partial.r(cor20, c(1,3,4), c(2, 5))
+p15 <- psych::partial.r(cor20, c(2,3,4), c(1, 5))
+
+p34 <- psych::partial.r(cor20, c(1,2,5), c(3, 4))
+p24 <- psych::partial.r(cor20, c(1,3,5), c(2, 4))
+p14 <- psych::partial.r(cor20, c(2,3,5), c(1, 4))
+
+p23 <- psych::partial.r(cor20, c(1,4,5), c(2, 3))
+p13 <- psych::partial.r(cor20, c(2,4,5), c(1, 3))
+
+p12 <- psych::partial.r(cor20, c(3,4,5), c(1, 2))
+```
+
+## 实现ParCorA in R
+
+```{r}
+#' N-th order partial correlation given a matrix or data.frame
+#'
+#' @param x A data frame or matrix 
+#' @param n An integer indicating n-th order, default 0
+#' @param use see cor
+#' @param method see cor
+#' @param adjust see p.adjust
+#'
+#' @return The matrix of partial correlation and P-value
+#' @export
+#'
+#' @examples
+partial.rn <- function(x, n=0L, 
+                       use='pairwise', method='pearson', 
+                       adjust = p.adjust.methods) {
+  adjust <- match.arg(adjust)
+  r <- cor(x, use = use, method = method)
+  
+  ## find potential identical variable
+  ind.cor <- caret::findCorrelation(r, cutoff = 0.999)
+  if (length(ind.cor) > 0) {
+    plyr::l_ply(ind.cor, function(i) {
+      message(
+        paste(names(which(r[, i] > 0.999)), collapse = ','),
+        ' are identical (cor > 0.999).')
+    })
+    stop('Error: found identical variables.')
+  }
+  
+  if (length(n) == 1 & n >= 0 & n < ncol(x)) {
+    if (n == 0L) {
+      return(r)
+    }
+  } else {
+    stop('Error: n must be an integer value less than ncol(x).')
+  }
+  
+  
+  
+  r.out <- r
+  p.out <- psych::corr.p(r, n = nrow(x), adjust = adjust, ci = F)$p
+  
+  for (j in 1:n) {
+    combs <- combn(seq_along(colnames(x)), j)
+    
+    for (i in 1:ncol(combs)) {
+      if (i %% 1000 == 0) {
+        print(paste(i, '/', ncol(combs)))
+      }
+      
+      ## calculate n-th order partial correlation
+      pr <- psych::partial.r(
+        r, 
+        setdiff(1:ncol(x), combs[, i]), 
+        combs[, i],
+        use = use,
+        method = method
+      )
+      
+      ## calculate partial correlation P-value
+      ## original P-value below the diagonal
+      ## adjusted P-value above the diagonal
+      pp <- psych::corr.p(pr, n = nrow(x), adjust = adjust, ci = F)$p
+      ## columns in y are removed
+      cols <- rownames(pr)
+      
+      ## less significant correlation
+      less.sig <- abs(pr) < abs(r.out[cols, cols])
+      r.out[cols, cols][less.sig] <- pr[less.sig]
+      p.out[cols, cols][less.sig] <- pp[less.sig]
+    }
+  }
+  
+  list(r = r.out, p = p.out)
+}
+
+```
+
+## 1st and 2nd order partial correlation
+
+```{r}
+spearman.1st.discovery <- d10 %>%
+  filter(
+    set == 'discovery'
+  ) %>%
+  select(
+    CE:last_col(), -S1P
+  ) %>%
+  partial.rn(n = 1, method = 'spearman', adjust = 'none')
+
+spearman.1st.validation <- d10 %>%
+  filter(
+    set == 'validation'
+  ) %>%
+  select(
+    CE:last_col(), -S1P
+  ) %>%
+  partial.rn(n = 1, method = 'spearman', adjust = 'none')
+
+spearman.2nd.discovery <- d10 %>%
+  filter(
+    set == 'discovery'
+  ) %>%
+  select(
+    CE:last_col(), -S1P
+  ) %>%
+  partial.rn(n = 2, method = 'spearman', adjust = 'none')
+
+spearman.2nd.validation <- d10 %>%
+  filter(
+    set == 'validation'
+  ) %>%
+  select(
+    CE:last_col(), -S1P
+  ) %>%
+  partial.rn(n = 2, method = 'spearman', adjust = 'none')
+```
+
+## correlation and full partial correlation
+
+```{r}
+spearman.discovery <- d10 %>%
+  filter(
+    set == 'discovery'
+  ) %>%
+  select(
+    CE:last_col(), -S1P
+  ) %>%
+  psych::corr.test(
+    method = 'spearman', adjust = 'none', ci = F
+  )
+
+spearman.fullpartial.discovery <- d10 %>%
+  filter(
+    set == 'discovery'
+  ) %>%
+  select(
+    CE:last_col(), -S1P
+  ) %>%
+  ppcor::pcor(method = 'spearman')
+
+spearman.validation <- d10 %>%
+  filter(
+    set == 'validation'
+  ) %>%
+  select(
+    CE:last_col(), -S1P
+  ) %>%
+  psych::corr.test(
+    method = 'spearman', adjust = 'none', ci = F
+  )
+
+spearman.fullpartial.validation <- d10 %>%
+  filter(
+    set == 'validation'
+  ) %>%
+  select(
+    CE:last_col(), -S1P
+  ) %>%
+  ppcor::pcor(method = 'spearman')
+```
+
+```{r, eval=F}
+plyr::l_ply(
+  list('spearman.discovery', 'spearman.validation',
+       'spearman.1st.discovery', 'spearman.1st.validation',
+       'spearman.2nd.discovery', 'spearman.2nd.validation',
+       'spearman.fullpartial.discovery', 'spearman.fullpartial.validation'),
+  function(var.name) {
+    dd <- get(var.name)
+    
+    if ('r' %in% names(dd)) {
+      r <- dd$r
+      p <- dd$p
+    } else {
+      r <- dd$estimate
+      p <- dd$p.value
+    }
+    
+    file.xlsx <- file.path(output.dir, paste0(var.name, '.correlations.xlsx'))
+    wb <- XLConnect::loadWorkbook(
+      file.xlsx, create = T
+    )
+    XLConnect::createSheet(wb, 'r')
+    XLConnect::writeWorksheet(
+      wb,
+      r,
+      sheet = 'r',
+      rownames = 'var'
+    )
+    XLConnect::createSheet(wb, 'p')
+    XLConnect::writeWorksheet(
+      wb,
+      p,
+      sheet = 'p',
+      rownames = 'var'
+    )
+    XLConnect::saveWorkbook(wb)
+  }
+)
+```
+
+## correlation heatmap
+
+```{r, eval=F}
+p.list <- lapply(
+  list('spearman.discovery', 'spearman.validation',
+       'spearman.1st.discovery', 'spearman.1st.validation',
+       'spearman.2nd.discovery', 'spearman.2nd.validation',
+       'spearman.fullpartial.discovery', 'spearman.fullpartial.validation'),
+  function(var.name) {
+    dd <- get(var.name)
+    
+    if ('r' %in% names(dd)) {
+      r <- dd$r
+      p <- dd$p
+    } else {
+      r <- dd$estimate
+      p <- dd$p.value
+    }
+    
+    
+    
+    r[p > 0.0001] <- 0
+    r[abs(r) < 0.4] <- 0
+    r[upper.tri(r, diag = T)] <- 0
+    col_fun <- circlize::colorRamp2(c(-1, 0, 1), c("blue", "white", "red"))
+    
+    ComplexHeatmap::Heatmap(
+      r,
+      name = 'Spearman',
+      column_title = var.name,
+      col = col_fun,
+      row_names_side = 'left',
+      cluster_rows = F, cluster_columns = F
+    )
+  }
+)
+
+
+file.pdf <- file.path(output.dir, 'heatmap_correlation_0.4.pdf')
+
+if (!file.exists(file.pdf)) {
+  cairo_pdf(file.pdf, width = 10, height = 10, onefile = T, family = 'sans')
+  plyr::l_ply(p.list, function(p) {
+    print(p)
+  })
+  dev.off()
+}
+```
+
+## correlation network
+
+P < 0.0001
+abs(r) > 0.4
+
+```{r, eval=F}
+library(igraph)
+
+file.pdf <- file.path(output.dir, 'network.pdf')
+
+cairo_pdf(file.pdf, onefile = T, width = 10, height = 10, family = 'sans')
+
+plyr::l_ply(
+  list('spearman.1st.discovery', 'spearman.1st.validation',
+       'spearman.2nd.discovery', 'spearman.2nd.validation',
+       'spearman.fullpartial.discovery', 'spearman.fullpartial.validation'),
+  function(var.name) {
+    dd <- get(var.name)
+    
+    if ('r' %in% names(dd)) {
+      r <- dd$r
+      p <- dd$p
+    } else {
+      r <- dd$estimate
+      p <- dd$p.value
+    }
+    
+    
+    
+    r[p > 0.0001] <- 0
+    r[abs(r) < 0.4] <- 0
+    r[upper.tri(r, diag = T)] <- 0
+    
+    vattr <- data.frame(
+      rn = rownames(r)
+    ) %>%
+      mutate(
+        class = stringi::stri_extract_first_regex(
+          rn, 'CE|DAG|LPC|LPE|LysoPC|PC|PE|PI|S1P|TAG'
+        ) %>%
+          plyr::mapvalues(from = c('LysoPC'), to = c('LPC')),
+        col = RColorBrewer::brewer.pal(length(unique(class)), 'Set1')[as.integer(as.factor(class))]
+      ) %>%
+      tibble::column_to_rownames('rn')
+    
+    r <- reshape2::melt(r) %>%
+      filter(abs(value) > 0) %>%
+      mutate(
+        class1 = stringi::stri_extract_first_regex(
+          Var1, 'CE|DAG|LPC|LPE|LysoPC|PC|PE|PI|S1P|TAG'
+        ) %>%
+          plyr::mapvalues(from = c('LysoPC'), to = c('LPC')),
+        class2 = stringi::stri_extract_first_regex(
+          Var2, 'CE|DAG|LPC|LPE|LysoPC|PC|PE|PI|S1P|TAG'
+        ) %>%
+          plyr::mapvalues(from = c('LysoPC'), to = c('LPC')),
+        col = ifelse(value < 0, 'red', 'grey')
+      ) %>%
+      plyr::rename(replace = c('Var1' = 'from', 'Var2' = 'to'))
+
+    g <- igraph::graph.data.frame(r[, c('from', 'to')], directed = FALSE)
+    V(g)$color <- vattr[vertex_attr(g, 'name'), 'col']
+    V(g)$frame.color <- 'white'
+    vertex.label.dist <- 0
+    E(g)$color <- r$col
+    E(g)$width <- abs(r$value) * 10
+    
+    # apply layout
+    set.seed(5)
+    l <- layout_with_fr(g, weights = rep(0.2, length(E(g))))
+    
+    plot(
+      g, layout = l,
+      vertex.label.dist=vertex.label.dist,
+      vertex.label.degree = 0,
+      vertex.label.cex=1,
+      main = var.name
+    )
+  }
+)
+
+
+dev.off()
+```
+

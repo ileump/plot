@@ -1,0 +1,100 @@
+---
+title: "Network"
+author: "leump"
+date: "2021/1/18"
+output: html_document
+---
+
+
+
+```{r}
+library(tidyr)
+library(dplyr)
+library(igraph)
+library(ggraph)
+library(graphlayouts)
+#create network with a group structure
+g <- sample_islands(9, 40, 0.4, 15)
+g <- igraph::simplify(g)
+V(g)$grp <- as.character(rep(1:9, each = 40))
+# create a random categorical variable
+V(g)$cat <- sample(c("A", "B", "C"), vcount(g), replace = T)
+# contract the network based on the groups
+g_clu <- contract(g, V(g)$grp, vertex.attr.comb = "concat")
+
+E(g_clu)$weight <- 1
+g_clu <- simplify(g_clu, edge.attr.comb = "sum")
+# calculate the number of occurrences of each attribute in each cluster
+V(g_clu)$A <- sapply(V(g_clu)$cat, function(x)
+    sum(x == "A"))
+V(g_clu)$B <- sapply(V(g_clu)$cat, function(x)
+    sum(x == "B"))
+V(g_clu)$C <- sapply(V(g_clu)$cat, function(x)
+    sum(x == "C"))
+# precompute layout
+xy <- layout_with_stress(g_clu)
+V(g_clu)$x <- xy[, 1]
+V(g_clu)$y <- xy[, 2]
+
+nodes_wide <- igraph::as_data_frame(g_clu, "vertices")
+nodes_long <- nodes_wide %>% select(A:C) %>%
+    mutate(id = 1:nrow(nodes_wide)) %>%
+    gather("attr", "value", A:C) %>%
+    mutate(attrn = as.numeric(as.factor(attr)))
+
+
+# create the bar charts
+bar_list <- lapply(1:vcount(g_clu), function(i) {
+    gt_plot <- ggplotGrob(
+        ggplot(nodes_long[nodes_long$id == i, ]) +
+            geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = 1, ymax = Inf), 
+                      fill = 'lightblue', alpha = 1) +
+            geom_hline(yintercept = 1, color = 'grey50', size = 1) +
+            geom_hline(yintercept = 2, color = 'grey50', size = 1) +
+            geom_hline(yintercept = 4, color = 'black', size = 1) +
+            geom_hline(yintercept = 8, color = 'grey50', size = 1) +
+            geom_vline(xintercept = c(1,2,3), colour = "grey50", size = 1) +
+            geom_col(
+                aes(attrn, value, group = id, fill = attr),
+                position = 'dodge2',
+                color = NA, alpha = 0.8
+            ) +
+            scale_fill_brewer(palette = 'Set1') +
+            # scale_fill_manual(values = c("goldenrod", "black", "darkorchid2")) +
+            labs(x = NULL, y = NULL) +
+            scale_x_continuous(breaks = c(1, 2, 3), limits = c(0.5, 3.5)) +
+            scale_y_log10() +
+            coord_polar() +
+            theme(
+                legend.position = "none",
+                panel.background = element_rect(fill = NA, colour = NA),
+                line = element_blank(),
+                text = element_blank()
+            )
+    )
+    panel_coords <- gt_plot$layout[gt_plot$layout$name == "panel", ]
+    gt_plot[panel_coords$t:panel_coords$b, panel_coords$l:panel_coords$r]
+})
+# convert to custom annotation
+annot_list <- lapply(1:vcount(g_clu), function(i) {
+    xmin <- nodes_wide$x[i] - 0.1
+    xmax <- nodes_wide$x[i] + 0.1
+    ymin <- nodes_wide$y[i] - 0.1
+    ymax <- nodes_wide$y[i] + 0.1
+    annotation_custom(
+        bar_list[[i]],
+        xmin = xmin,
+        xmax = xmax,
+        ymin = ymin,
+        ymax = ymax
+    )
+})
+# create basic network
+p <- ggraph(g_clu, "manual", x = V(g_clu)$x, y = V(g_clu)$y) +
+    geom_edge_link0() +
+    theme_graph()+
+    coord_fixed()
+# put everything together
+Reduce("+", annot_list, p)
+
+```
