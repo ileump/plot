@@ -2692,9 +2692,9 @@ ds01 <- read.csv('/Users/leump/Desktop/table1.csv',
 
 
 print(tableone::CreateTableOne(
-    vars = colnames(d10),
-    strata = 'Group',
-    data = d10,
+    vars = colnames(d.sample.pheno)[4:239],
+    strata = 'group',
+    data = d.sample.pheno,
     test = T
 ), print = F) %>%  DT::datatable(
   caption = 'Patient characteristics by Group',
@@ -2757,7 +2757,7 @@ d10 <- XLConnect::readWorksheetFromFile(
 
 g <- factor(d10$Group)
 
-ht <- sapply(d10, function(x) {
+ht <- sapply(d.sample.pheno, function(x) {
   g_pair <- combn(levels(g), 2)
   param.out <- oneway.test(x ~ g)
   param.out <- param.out$p.value
@@ -2775,7 +2775,7 @@ ht <- sapply(d10, function(x) {
   #posthoc.out <- as.matrix(posthoc.out$output$games.howell)
   
   
-  res <- c(`Welch’s ANOVA` = param.out,
+  res <- c(`Welch's ANOVA` = param.out,
            `Kruskal-Wallis test` = nonparam.out,
            `chi-square test` = chisq_test)
   res

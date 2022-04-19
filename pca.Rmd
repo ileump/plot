@@ -1,0 +1,84 @@
+---
+title: "pca"
+author: "leump"
+date: "4/18/2022"
+output: html_document
+---
+
+```{r, pca}
+library(tidyverse)
+pca <- read.table("/Users/leump/Desktop/merge.eigenvec", header = F)
+eigval <- read.table("/Users/leump/Desktop/merge.eigenval", header = F)
+pcs <- paste0("PC", 1:nrow(eigval))
+eigval[nrow(eigval),1] <- 0
+percentage <- eigval$V1/sum(eigval$V1)*100
+eigval_df <- as.data.frame(cbind(pcs, eigval[,1], percentage), stringsAsFactors = F)
+names(eigval_df) <- c("PCs", "variance", "proportion")
+eigval_df$variance <- as.numeric(eigval_df$variance)
+eigval_df$proportion <- as.numeric(eigval_df$proportion)
+pc1_proportion <- paste0(round(eigval_df[1,3],2),"%")
+pc2_proportion <- paste0(round(eigval_df[2,3],2),"%")
+sample <- read.table("/Users/leump/Desktop/sample.txt", header = F)
+data <- left_join(pca,sample,by="V1")
+data <- data[,-c(2, 6:22)] 
+colnames(data) <- c("Sample","PC1","PC2","PC3","Type")
+data$Type <- factor(data$Type, levels = c("WGS_4810","AF"))
+p <- ggplot(data, aes(PC1, PC2)) +
+  geom_point(aes(color = Type), size = 3) +
+  stat_ellipse(aes(color = Type),level = 0.95, show.legend = FALSE, size = 1) +
+  scale_color_manual(values = c("#2a6117", "#e93122", "#0042f4")) +
+  theme(panel.grid = element_blank(),
+        panel.background = element_blank(),
+        panel.border = element_rect(fill = NA, colour = "black"),
+        legend.title = element_blank(),
+        legend.key = element_blank(),
+        axis.text = element_text(colour = "black", size = 12, family = "Times New Roman"),
+        axis.title = element_text(color = "black",size = 15, family = "Times New Roman"),
+        legend.text = element_text(colour = "black", size=15, family = "Times New Roman"),
+        legend.position = c(0.15,0.15)) +
+  labs(x = paste0("PC1(", pc1_proportion, ")"),
+       y = paste0("PC2(", pc2_proportion, ")"))
+p
+
+
+```
+
+```{r, ggplot2}
+pca <- read.table("/Users/leump/Desktop/merge.eigenvec", header = F)
+eigval <- read.table("/Users/leump/Desktop/merge.eigenval", header = F)
+
+pca <- read.table("/Users/leump/Desktop/merge.eigenvec", header = F)
+eigval <- read.table("/Users/leump/Desktop/merge.eigenval", header = F)
+pcs <- paste0("PC", 1:nrow(eigval))
+eigval[nrow(eigval),1] <- 0
+percentage <- eigval$V1/sum(eigval$V1)*100
+eigval_df <- as.data.frame(cbind(pcs, eigval[,1], percentage), stringsAsFactors = F)
+names(eigval_df) <- c("PCs", "variance", "proportion")
+eigval_df$variance <- as.numeric(eigval_df$variance)
+eigval_df$proportion <- as.numeric(eigval_df$proportion)
+pc1_proportion <- paste0(round(eigval_df[1,3],2),"%")
+pc2_proportion <- paste0(round(eigval_df[2,3],2),"%")
+
+
+sample <- read.csv("/Users/leump/Desktop/sample.csv", row.names = 1, check.names = F)
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
